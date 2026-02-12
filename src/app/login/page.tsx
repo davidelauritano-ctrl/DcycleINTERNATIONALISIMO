@@ -4,7 +4,7 @@ import { Suspense, useEffect, useState } from "react";
 import { createBrowserClient } from "@supabase/ssr";
 import { useSearchParams } from "next/navigation";
 
-const BUILD_ID = "v4-20260212"; // version marker to confirm deploy
+const BUILD_ID = "v5-20260212"; // version marker to confirm deploy
 
 function LoginForm() {
   const [email, setEmail] = useState("");
