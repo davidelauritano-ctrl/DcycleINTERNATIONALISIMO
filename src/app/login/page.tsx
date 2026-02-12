@@ -1,8 +1,10 @@
 "use client";
 
 import { Suspense, useEffect, useState } from "react";
-import { supabase } from "@/lib/supabase";
+import { createBrowserClient } from "@supabase/ssr";
 import { useSearchParams } from "next/navigation";
+
+const BUILD_ID = "v4-20260212"; // version marker to confirm deploy
 
 function LoginForm() {
   const [email, setEmail] = useState("");
@@ -14,6 +16,11 @@ function LoginForm() {
   const searchParams = useSearchParams();
   const redirectTo = searchParams.get("redirect") || "/";
   const authError = searchParams.get("error");
+
+  // Check env vars are available at build time
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+  const envOk = supabaseUrl.length > 0 && supabaseAnonKey.length > 0;
 
   useEffect(() => {
     if (authError === "auth_callback_failed") {
@@ -27,7 +34,16 @@ function LoginForm() {
     setError("");
     setMessage("");
 
+    if (!envOk) {
+      setError("Supabase env vars are missing. Check NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in Vercel.");
+      setLoading(false);
+      return;
+    }
+
     try {
+      // Create client directly — no Proxy, no import indirection
+      const supabase = createBrowserClient(supabaseUrl, supabaseAnonKey);
+
       if (isSignUp) {
         const { error: signUpError } = await supabase.auth.signUp({
           email,
@@ -39,21 +55,24 @@ function LoginForm() {
           setMessage("Check your email for a confirmation link.");
         }
       } else {
-        const { data, error: signInError } = await supabase.auth.signInWithPassword({
-          email,
-          password,
-        });
+        const { data, error: signInError } =
+          await supabase.auth.signInWithPassword({ email, password });
         if (signInError) {
           setError(signInError.message);
         } else if (!data.session) {
-          setError("Sign-in returned no session. Check your Supabase email confirmation settings.");
+          setError(
+            "Sign-in succeeded but no session was returned. Your email may not be confirmed — check Supabase dashboard."
+          );
         } else {
+          // Session stored in cookies by createBrowserClient — do a hard navigate
+          setMessage("Signed in! Redirecting...");
           window.location.href = redirectTo;
-          return;
+          return; // keep loading state while page navigates
         }
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unexpected error — check browser console");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(`Login error: ${msg}`);
     }
     setLoading(false);
   };
@@ -63,18 +82,29 @@ function LoginForm() {
       setError("Enter your email first");
       return;
     }
+    if (!envOk) {
+      setError("Supabase env vars are missing.");
+      return;
+    }
     setLoading(true);
     setError("");
-    const { error: magicError } = await supabase.auth.signInWithOtp({
-      email,
-      options: {
-        emailRedirectTo: `${window.location.origin}/auth/callback?redirect=${encodeURIComponent(redirectTo)}`,
-      },
-    });
-    if (magicError) {
-      setError(magicError.message);
-    } else {
-      setMessage("Check your email for the magic link.");
+
+    try {
+      const supabase = createBrowserClient(supabaseUrl, supabaseAnonKey);
+      const { error: magicError } = await supabase.auth.signInWithOtp({
+        email,
+        options: {
+          emailRedirectTo: `${window.location.origin}/auth/callback?redirect=${encodeURIComponent(redirectTo)}`,
+        },
+      });
+      if (magicError) {
+        setError(magicError.message);
+      } else {
+        setMessage("Check your email for the magic link.");
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(`Magic link error: ${msg}`);
     }
     setLoading(false);
   };
@@ -91,6 +121,12 @@ function LoginForm() {
         </p>
       </div>
 
+      {!envOk && (
+        <p className="text-sm text-red-400 bg-red-400/10 px-3 py-2 rounded-lg mb-4">
+          Supabase not configured. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in Vercel environment variables, then redeploy.
+        </p>
+      )}
+
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
           <label className="block text-sm font-medium mb-1.5">Email</label>
@@ -104,9 +140,7 @@ function LoginForm() {
           />
         </div>
         <div>
-          <label className="block text-sm font-medium mb-1.5">
-            Password
-          </label>
+          <label className="block text-sm font-medium mb-1.5">Password</label>
           <input
             type="password"
             value={password}
@@ -134,7 +168,7 @@ function LoginForm() {
           disabled={loading}
           className="w-full py-2.5 rounded-lg bg-primary text-primary-foreground font-medium text-sm hover:bg-primary/90 disabled:opacity-50 transition-colors"
         >
-          {loading ? "Loading..." : isSignUp ? "Sign Up" : "Sign In"}
+          {loading ? "Signing in..." : isSignUp ? "Sign Up" : "Sign In"}
         </button>
 
         <button
@@ -157,6 +191,10 @@ function LoginForm() {
           </button>
         </p>
       </form>
+
+      <p className="text-center text-xs text-muted-foreground/50 mt-6">
+        {BUILD_ID}
+      </p>
     </div>
   );
 }
