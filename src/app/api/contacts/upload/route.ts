@@ -104,33 +104,35 @@ export async function POST(request: NextRequest) {
     const columnsToRemove: string[] = [];
     const BATCH_SIZE = 500;
 
-    for (let i = 0; i < validRows.length; i += BATCH_SIZE) {
-      const batch = validRows.slice(i, i + BATCH_SIZE).map((row) => {
+    function stripMissing<T extends Record<string, unknown>>(rows: T[]): T[] {
+      if (columnsToRemove.length === 0) return rows;
+      return rows.map((row) => {
         const clean = { ...row };
-        for (const col of columnsToRemove) {
-          delete (clean as Record<string, unknown>)[col];
-        }
+        for (const col of columnsToRemove) delete clean[col];
         return clean;
       });
+    }
+
+    for (let i = 0; i < validRows.length; i += BATCH_SIZE) {
+      const rawBatch = validRows.slice(i, i + BATCH_SIZE);
+      let batch = stripMissing(rawBatch);
 
       let { error } = await supabase
         .from("contacts")
         .upsert(batch, { onConflict: "hubspot_record_id" });
 
-      // If a column doesn't exist, remove it and retry
-      while (error?.message?.includes("Could not find the")) {
+      // If a column doesn't exist, remove it and retry (max 5 to prevent infinite loop)
+      let retries = 0;
+      while (error?.message?.includes("Could not find the") && retries < 5) {
         const match = error.message.match(/Could not find the '(\w+)' column/);
         if (!match) break;
         columnsToRemove.push(match[1]);
-        const retryBatch = batch.map((row) => {
-          const clean = { ...row };
-          delete (clean as Record<string, unknown>)[match[1]];
-          return clean;
-        });
+        batch = stripMissing(rawBatch);
         const retry = await supabase
           .from("contacts")
-          .upsert(retryBatch, { onConflict: "hubspot_record_id" });
+          .upsert(batch, { onConflict: "hubspot_record_id" });
         error = retry.error;
+        retries++;
       }
 
       if (error) {
