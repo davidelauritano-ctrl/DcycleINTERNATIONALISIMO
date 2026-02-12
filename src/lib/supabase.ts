@@ -1,16 +1,17 @@
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import { createBrowserClient } from "@supabase/ssr";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
 
-// Client-side Supabase client (uses anon key, respects RLS)
-// Lazy-initialized to avoid build-time errors when env vars are not set
+// Client-side Supabase client (uses @supabase/ssr to sync session to cookies)
+// This ensures the middleware can read the auth session from cookies
 let _supabase: SupabaseClient | null = null;
 
 export const supabase: SupabaseClient = new Proxy({} as SupabaseClient, {
   get(_target, prop) {
     if (!_supabase) {
-      _supabase = createClient(supabaseUrl, supabaseAnonKey);
+      _supabase = createBrowserClient(supabaseUrl, supabaseAnonKey);
     }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return (_supabase as any)[prop as string];
