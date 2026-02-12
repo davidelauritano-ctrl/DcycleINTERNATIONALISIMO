@@ -1,8 +1,9 @@
 "use client";
 
 import { AppShell } from "@/components/dashboard/app-shell";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
+import { Upload, RefreshCw, Database, Trash2, Clock } from "lucide-react";
 
 export default function SettingsPage() {
   return (
@@ -18,8 +19,12 @@ export default function SettingsPage() {
           <HubSpotSync />
           <LinkedInUpload />
         </div>
+        <UploadHistory />
         <MonthlySpendEditor />
-        <RefreshViews />
+        <div className="grid gap-6 lg:grid-cols-2">
+          <RefreshViews />
+          <DataStats />
+        </div>
       </div>
     </AppShell>
   );
@@ -50,19 +55,27 @@ function HubSpotSync() {
 
   return (
     <div className="rounded-xl border border-border bg-card p-6">
-      <h2 className="text-lg font-semibold mb-1">HubSpot Integration</h2>
-      <p className="text-sm text-muted-foreground mb-4">
-        Sync contacts and deals from HubSpot CRM
-      </p>
+      <div className="flex items-center gap-3 mb-4">
+        <div className="p-2 rounded-lg bg-orange-500/10">
+          <Database className="h-5 w-5 text-orange-400" />
+        </div>
+        <div>
+          <h2 className="text-lg font-semibold">HubSpot Integration</h2>
+          <p className="text-sm text-muted-foreground">
+            Sync contacts and deals from HubSpot CRM
+          </p>
+        </div>
+      </div>
       <p className="text-xs text-muted-foreground mb-4">
-        Set <code className="bg-muted px-1 rounded">HUBSPOT_ACCESS_TOKEN</code>{" "}
-        in your environment variables.
+        Set <code className="bg-muted px-1.5 py-0.5 rounded text-xs">HUBSPOT_ACCESS_TOKEN</code> in
+        your environment variables. Auto-sync runs daily at 06:00 UTC via Vercel Cron.
       </p>
       <button
         onClick={handleSync}
         disabled={syncing}
-        className="px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors"
+        className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors"
       >
+        <RefreshCw className={`h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
         {syncing ? "Syncing..." : "Sync Now"}
       </button>
       {result && (
@@ -85,7 +98,7 @@ function LinkedInUpload() {
   const [error, setError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
 
-  const handleFile = async (file: File) => {
+  const handleFile = useCallback(async (file: File) => {
     if (!file.name.endsWith(".csv")) {
       setError("Please upload a CSV file");
       return;
@@ -110,21 +123,31 @@ function LinkedInUpload() {
     } finally {
       setUploading(false);
     }
-  };
-
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    setDragOver(false);
-    const file = e.dataTransfer.files[0];
-    if (file) handleFile(file);
   }, []);
+
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      setDragOver(false);
+      const file = e.dataTransfer.files[0];
+      if (file) handleFile(file);
+    },
+    [handleFile]
+  );
 
   return (
     <div className="rounded-xl border border-border bg-card p-6">
-      <h2 className="text-lg font-semibold mb-1">LinkedIn Ads CSV Upload</h2>
-      <p className="text-sm text-muted-foreground mb-4">
-        Upload exported CSV from LinkedIn Ads Manager
-      </p>
+      <div className="flex items-center gap-3 mb-4">
+        <div className="p-2 rounded-lg bg-blue-500/10">
+          <Upload className="h-5 w-5 text-blue-400" />
+        </div>
+        <div>
+          <h2 className="text-lg font-semibold">LinkedIn Ads CSV Upload</h2>
+          <p className="text-sm text-muted-foreground">
+            Upload exported CSV from LinkedIn Ads Manager
+          </p>
+        </div>
+      </div>
       <div
         onDragOver={(e) => {
           e.preventDefault();
@@ -138,6 +161,7 @@ function LinkedInUpload() {
             : "border-border hover:border-muted-foreground"
         }`}
       >
+        <Upload className="h-8 w-8 mx-auto mb-3 text-muted-foreground" />
         <p className="text-sm text-muted-foreground mb-2">
           Drag & drop your CSV file here, or
         </p>
@@ -173,6 +197,149 @@ function LinkedInUpload() {
   );
 }
 
+function UploadHistory() {
+  const [batches, setBatches] = useState<
+    Array<{ upload_batch_id: string; uploaded_at: string; count: number }>
+  >([]);
+  const [loading, setLoading] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [reverting, setReverting] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+
+  const loadBatches = async () => {
+    setLoading(true);
+    // Get distinct batch_ids with their upload times and row counts
+    const { data } = await supabase
+      .from("linkedin_ads_raw")
+      .select("upload_batch_id, uploaded_at")
+      .not("upload_batch_id", "is", null)
+      .order("uploaded_at", { ascending: false });
+
+    if (data) {
+      const batchMap = new Map<string, { uploaded_at: string; count: number }>();
+      for (const row of data) {
+        const bid = row.upload_batch_id;
+        if (!bid) continue;
+        const existing = batchMap.get(bid);
+        if (existing) {
+          existing.count++;
+        } else {
+          batchMap.set(bid, { uploaded_at: row.uploaded_at, count: 1 });
+        }
+      }
+      setBatches(
+        Array.from(batchMap.entries()).map(([id, v]) => ({
+          upload_batch_id: id,
+          uploaded_at: v.uploaded_at,
+          count: v.count,
+        }))
+      );
+    }
+    setLoading(false);
+    setLoaded(true);
+  };
+
+  const handleRevert = async (batchId: string) => {
+    if (!confirm(`Revert this upload? This will delete all rows from batch ${batchId.slice(0, 8)}...`)) {
+      return;
+    }
+    setReverting(batchId);
+    setMessage(null);
+    try {
+      const res = await fetch("/api/linkedin/revert", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ batch_id: batchId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Revert failed");
+      setMessage(`Reverted ${data.rows_deleted} rows`);
+      setBatches((prev) => prev.filter((b) => b.upload_batch_id !== batchId));
+    } catch (err) {
+      setMessage(`Error: ${err instanceof Error ? err.message : "Revert failed"}`);
+    } finally {
+      setReverting(null);
+    }
+  };
+
+  return (
+    <div className="rounded-xl border border-border bg-card p-6">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-3">
+          <div className="p-2 rounded-lg bg-purple-500/10">
+            <Clock className="h-5 w-5 text-purple-400" />
+          </div>
+          <div>
+            <h2 className="text-lg font-semibold">Upload History</h2>
+            <p className="text-sm text-muted-foreground">
+              LinkedIn Ads CSV upload batches - revert if needed
+            </p>
+          </div>
+        </div>
+        {!loaded && (
+          <button
+            onClick={loadBatches}
+            disabled={loading}
+            className="px-4 py-2 rounded-lg bg-secondary text-sm font-medium hover:bg-secondary/80 disabled:opacity-50"
+          >
+            {loading ? "Loading..." : "Load History"}
+          </button>
+        )}
+      </div>
+
+      {loaded && batches.length === 0 && (
+        <div className="text-center py-8 text-muted-foreground text-sm">
+          No upload batches found. Upload a LinkedIn CSV to get started.
+        </div>
+      )}
+
+      {loaded && batches.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border">
+                <th className="text-left py-2 px-3 font-medium text-muted-foreground">Batch ID</th>
+                <th className="text-left py-2 px-3 font-medium text-muted-foreground">Uploaded</th>
+                <th className="text-right py-2 px-3 font-medium text-muted-foreground">Rows</th>
+                <th className="text-right py-2 px-3 font-medium text-muted-foreground">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {batches.map((b) => (
+                <tr key={b.upload_batch_id} className="border-b border-border/50">
+                  <td className="py-2 px-3 font-mono text-xs">{b.upload_batch_id.slice(0, 12)}...</td>
+                  <td className="py-2 px-3 text-muted-foreground">
+                    {new Date(b.uploaded_at).toLocaleString()}
+                  </td>
+                  <td className="py-2 px-3 text-right">{b.count}</td>
+                  <td className="py-2 px-3 text-right">
+                    <button
+                      onClick={() => handleRevert(b.upload_batch_id)}
+                      disabled={reverting === b.upload_batch_id}
+                      className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs text-red-400 hover:bg-red-400/10 disabled:opacity-50 transition-colors"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                      {reverting === b.upload_batch_id ? "Reverting..." : "Revert"}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {message && (
+        <p className={`mt-3 text-sm px-3 py-2 rounded-lg ${
+          message.startsWith("Error") ? "text-red-400 bg-red-400/10" : "text-primary bg-primary/10"
+        }`}>
+          {message}
+        </p>
+      )}
+    </div>
+  );
+}
+
 function MonthlySpendEditor() {
   const [rows, setRows] = useState<
     Array<{ month_key: string; channel: string; amount: string }>
@@ -197,7 +364,6 @@ function MonthlySpendEditor() {
         }))
       );
     } else {
-      // Seed with common month_keys
       const months = [
         "9_2025","10_2025","11_2025","12_2025",
         "1_2026","2_2026","3_2026","4_2026","5_2026","6_2026",
@@ -358,16 +524,23 @@ function RefreshViews() {
 
   return (
     <div className="rounded-xl border border-border bg-card p-6">
-      <h2 className="text-lg font-semibold mb-1">Refresh Dashboard Data</h2>
-      <p className="text-sm text-muted-foreground mb-4">
-        Re-compute materialized views (leads_enriched &
-        linkedin_ads_performance)
-      </p>
+      <div className="flex items-center gap-3 mb-4">
+        <div className="p-2 rounded-lg bg-emerald-500/10">
+          <RefreshCw className="h-5 w-5 text-emerald-400" />
+        </div>
+        <div>
+          <h2 className="text-lg font-semibold">Refresh Dashboard Data</h2>
+          <p className="text-sm text-muted-foreground">
+            Re-compute materialized views
+          </p>
+        </div>
+      </div>
       <button
         onClick={handleRefresh}
         disabled={refreshing}
-        className="px-4 py-2 rounded-lg bg-secondary text-sm font-medium hover:bg-secondary/80 disabled:opacity-50 transition-colors"
+        className="flex items-center gap-2 px-4 py-2 rounded-lg bg-secondary text-sm font-medium hover:bg-secondary/80 disabled:opacity-50 transition-colors"
       >
+        <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
         {refreshing ? "Refreshing..." : "Refresh Now"}
       </button>
       {message && (
@@ -380,6 +553,74 @@ function RefreshViews() {
         >
           {message}
         </p>
+      )}
+    </div>
+  );
+}
+
+function DataStats() {
+  const [stats, setStats] = useState<Record<string, number>>({});
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function loadStats() {
+      const tables = ["contacts", "deals", "linkedin_ads_raw", "campaign_names", "mql_to_sql"];
+      const counts: Record<string, number> = {};
+
+      for (const table of tables) {
+        const { count } = await supabase
+          .from(table)
+          .select("*", { count: "exact", head: true });
+        counts[table] = count || 0;
+      }
+
+      setStats(counts);
+      setLoading(false);
+    }
+    loadStats();
+  }, []);
+
+  const tableLabels: Record<string, string> = {
+    contacts: "Contacts",
+    deals: "Deals",
+    linkedin_ads_raw: "LinkedIn Ads Rows",
+    campaign_names: "Campaign Mappings",
+    mql_to_sql: "MQL Entries",
+  };
+
+  return (
+    <div className="rounded-xl border border-border bg-card p-6">
+      <div className="flex items-center gap-3 mb-4">
+        <div className="p-2 rounded-lg bg-cyan-500/10">
+          <Database className="h-5 w-5 text-cyan-400" />
+        </div>
+        <div>
+          <h2 className="text-lg font-semibold">Database Stats</h2>
+          <p className="text-sm text-muted-foreground">
+            Current row counts per table
+          </p>
+        </div>
+      </div>
+      {loading ? (
+        <div className="space-y-2">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} className="h-8 rounded bg-muted animate-pulse" />
+          ))}
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {Object.entries(stats).map(([table, count]) => (
+            <div
+              key={table}
+              className="flex items-center justify-between py-2 px-3 rounded-lg bg-muted/30"
+            >
+              <span className="text-sm">{tableLabels[table] || table}</span>
+              <span className="text-sm font-mono font-semibold">
+                {count.toLocaleString()}
+              </span>
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );

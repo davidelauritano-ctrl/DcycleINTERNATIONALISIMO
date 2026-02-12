@@ -10,6 +10,7 @@ import { useEffect, useState, useMemo } from "react";
 import { formatCurrency, formatNumber, safeDivide, sortMonthKeys, monthKeyToLabel } from "@/lib/utils";
 import type { LeadEnriched, LinkedInAdsPerformance, MonthlySpend, ChannelMonthlyMetrics, CountryMonthlyMetrics } from "@/types";
 import { Users, Target, Handshake, TrendingUp, DollarSign, BarChart3, PieChart } from "lucide-react";
+import { DashboardEmptyState } from "@/components/dashboard/empty-state";
 
 export default function DashboardPage() {
   const [leads, setLeads] = useState<LeadEnriched[]>([]);
@@ -243,6 +244,20 @@ export default function DashboardPage() {
           <div className="h-80 rounded-xl bg-card border border-border animate-pulse" />
           <div className="h-80 rounded-xl bg-card border border-border animate-pulse" />
         </div>
+      </AppShell>
+    );
+  }
+
+  if (leads.length === 0 && linkedinPerf.length === 0) {
+    return (
+      <AppShell>
+        <div>
+          <h1 className="text-2xl font-bold mb-2">Dashboard</h1>
+          <p className="text-muted-foreground text-sm">
+            International Paid Media Performance Overview
+          </p>
+        </div>
+        <DashboardEmptyState />
       </AppShell>
     );
   }
