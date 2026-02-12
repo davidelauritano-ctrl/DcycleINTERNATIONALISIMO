@@ -74,8 +74,9 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Build rows from CSV, only including columns the DB has (if we could detect them)
-    const hasHubspotId = existingCols.size === 0 || existingCols.has("hubspot_record_id");
+    // Build rows from CSV, only including columns the DB has
+    // If table is empty (can't detect schema), default to NO hubspot_record_id
+    const hasHubspotId = existingCols.size > 0 && existingCols.has("hubspot_record_id");
 
     const rows = parsed.data.map((row) => {
       const mapped: Record<string, unknown> = {
@@ -103,14 +104,14 @@ export async function POST(request: NextRequest) {
         mapped.hubspot_record_id = parseBigInt(row["Record ID"]);
       }
 
-      // Only include amount_corrected if column exists
-      if (existingCols.size === 0 || existingCols.has("amount_corrected")) {
+      // Only include optional columns if we confirmed they exist
+      if (existingCols.has("amount_corrected")) {
         mapped.amount_corrected = row["Amount Corrected"]
           ? parseNum(row["Amount Corrected"])
           : null;
       }
 
-      if (existingCols.size === 0 || existingCols.has("upload_batch_id")) {
+      if (existingCols.has("upload_batch_id")) {
         mapped.upload_batch_id = batch_id;
       }
 

@@ -67,8 +67,9 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // If table is empty (can't detect schema), default to NO hubspot_record_id
     const hasHubspotId =
-      existingCols.size === 0 || existingCols.has("hubspot_record_id");
+      existingCols.size > 0 && existingCols.has("hubspot_record_id");
 
     const rows = parsed.data.map((row) => {
       const mapped: Record<string, unknown> = {
@@ -106,7 +107,7 @@ export async function POST(request: NextRequest) {
         mapped.hubspot_record_id = parseBigInt(row["Record ID"]);
       }
 
-      if (existingCols.size === 0 || existingCols.has("upload_batch_id")) {
+      if (existingCols.has("upload_batch_id")) {
         mapped.upload_batch_id = batch_id;
       }
 
