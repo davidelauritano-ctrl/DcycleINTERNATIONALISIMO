@@ -10,6 +10,25 @@ function parseNum(val: string | undefined | null): number {
   return isNaN(parsed) ? 0 : parsed;
 }
 
+/** Parse and round to integer for INTEGER columns */
+function parseInt_(val: string | undefined | null): number {
+  return Math.round(parseNum(val));
+}
+
+/** Parse and round to fixed decimals for DECIMAL columns */
+function parseDec(
+  val: string | undefined | null,
+  maxDigitsBefore: number,
+  decimals: number,
+): number {
+  const n = parseNum(val);
+  const rounded = Number(n.toFixed(decimals));
+  const maxVal = Math.pow(10, maxDigitsBefore) - Math.pow(10, -decimals);
+  if (rounded > maxVal) return maxVal;
+  if (rounded < -maxVal) return -maxVal;
+  return rounded;
+}
+
 function parseDate(val: string | undefined | null): string | null {
   if (!val) return null;
   const d = new Date(val);
@@ -50,27 +69,27 @@ export async function POST(request: NextRequest) {
       campaign_objective: row["Campaign Objective Type"] ?? null,
       campaign_type: row["Campaign Type"] ?? null,
       campaign_status: row["Campaign Status"] ?? null,
-      total_spent: parseNum(row["Total Spent"]),
-      impressions: parseNum(row["Impressions"]),
-      clicks: parseNum(row["Clicks"]),
-      ctr: parseNum(row["Click Through Rate"]),
-      leads: parseNum(row["Leads"] ?? row["Leads (Work Email)"]),
-      cost_per_lead: parseNum(row["Cost per Lead"]),
-      average_cpc: parseNum(row["Average CPC"]),
-      average_cpm: parseNum(row["Average CPM"]),
-      reach: parseNum(row["Reach"]),
-      avg_frequency: parseNum(row["Average Frequency"]),
-      lead_form_completion_rate: parseNum(row["Lead Form Completion Rate"]),
-      conversions: parseNum(row["Conversions"]),
-      cost_per_conversion: parseNum(row["Cost per Conversion"]),
-      engagement_rate: parseNum(row["Engagement Rate"]),
-      reactions: parseNum(row["Reactions"]),
-      total_social_actions: parseNum(row["Total Social Actions"]),
-      clicks_to_landing_page: parseNum(row["Clicks to Landing Page"]),
-      sends: parseNum(row["Sends"]),
-      open_rate: parseNum(row["Open Rate"]),
-      sponsored_messaging_clicks: parseNum(row["Sponsored InMail Clicks"]),
-      cost_per_open: parseNum(row["Cost per Open"]),
+      total_spent: parseDec(row["Total Spent"], 12, 2),
+      impressions: parseInt_(row["Impressions"]),
+      clicks: parseInt_(row["Clicks"]),
+      ctr: parseDec(row["Click Through Rate"], 6, 6),
+      leads: parseInt_(row["Leads"] ?? row["Leads (Work Email)"]),
+      cost_per_lead: parseDec(row["Cost per Lead"], 12, 2),
+      average_cpc: parseDec(row["Average CPC"], 12, 2),
+      average_cpm: parseDec(row["Average CPM"], 12, 2),
+      reach: parseInt_(row["Reach"]),
+      avg_frequency: parseDec(row["Average Frequency"], 6, 3),
+      lead_form_completion_rate: parseDec(row["Lead Form Completion Rate"], 6, 4),
+      conversions: parseInt_(row["Conversions"]),
+      cost_per_conversion: parseDec(row["Cost per Conversion"], 12, 2),
+      engagement_rate: parseDec(row["Engagement Rate"], 6, 5),
+      reactions: parseInt_(row["Reactions"]),
+      total_social_actions: parseInt_(row["Total Social Actions"]),
+      clicks_to_landing_page: parseInt_(row["Clicks to Landing Page"]),
+      sends: parseInt_(row["Sends"]),
+      open_rate: parseDec(row["Open Rate"], 6, 4),
+      sponsored_messaging_clicks: parseInt_(row["Sponsored InMail Clicks"]),
+      cost_per_open: parseDec(row["Cost per Open"], 12, 2),
       upload_batch_id: batch_id,
     }));
 
