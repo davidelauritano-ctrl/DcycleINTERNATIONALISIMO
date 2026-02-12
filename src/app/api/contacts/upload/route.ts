@@ -29,6 +29,42 @@ function str(val: string | undefined | null): string | null {
   return val.trim();
 }
 
+function mapRow(row: Record<string, string>, batchId: string): Record<string, unknown> {
+  return {
+    hubspot_record_id: parseBigInt(row["Record ID"]),
+    first_name: str(row["First Name"]),
+    last_name: str(row["Last Name"]),
+    email: str(row["Email"]),
+    phone: str(row["Phone Number"] ?? row["Phone"]),
+    first_email_date: parseDatetime(row["First Email Date"]),
+    contact_owner: str(row["Contact owner"] ?? row["Contact Owner"]),
+    company_name: str(row["Company Name"] ?? row["Company"]),
+    company_industry: str(row["Industry"]),
+    lead_status: str(row["Lead Status"]),
+    num_employees: row["Number of Employees"]
+      ? Math.round(parseNum(row["Number of Employees"]))
+      : null,
+    linkedin_company_url: str(
+      row["LinkedIn Company Page"] ?? row["LinkedIn Company URL"],
+    ),
+    lead_source: str(row["Lead Source"]),
+    lead_origin_multiple: str(
+      row["Lead Origin (multiple)"] ?? row["Lead Origin"],
+    ),
+    original_traffic_source: str(
+      row["Original Source"] ?? row["Original Traffic Source"],
+    ),
+    recent_deal_amount: row["Recent Deal Amount"]
+      ? parseNum(row["Recent Deal Amount"])
+      : null,
+    meeting_date: parseDatetime(row["Meeting Date"]),
+    utm_campaign: str(row["UTM Campaign"] ?? row["utm_campaign"]),
+    associated_company_id: parseBigInt(row["Associated Company ID"]),
+    upload_batch_id: batchId,
+    synced_at: new Date().toISOString(),
+  };
+}
+
 export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData();
@@ -51,149 +87,63 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const batch_id = uuidv4();
-    const supabase = getServiceSupabase();
-
-    // Probe which columns the contacts table actually has
-    const { data: probeRow, error: probeError } = await supabase
-      .from("contacts")
-      .select("*")
-      .limit(1);
-
-    const existingCols = new Set<string>();
-    if (!probeError && probeRow) {
-      if (probeRow.length > 0) {
-        for (const key of Object.keys(probeRow[0])) existingCols.add(key);
-      }
-    }
-
-    // If table is empty (can't detect schema), default to NO hubspot_record_id
-    const hasHubspotId =
-      existingCols.size > 0 && existingCols.has("hubspot_record_id");
-
-    const rows = parsed.data.map((row) => {
-      const mapped: Record<string, unknown> = {
-        first_name: str(row["First Name"]),
-        last_name: str(row["Last Name"]),
-        email: str(row["Email"]),
-        phone: str(row["Phone Number"] ?? row["Phone"]),
-        first_email_date: parseDatetime(row["First Email Date"]),
-        contact_owner: str(row["Contact owner"] ?? row["Contact Owner"]),
-        company_name: str(row["Company Name"] ?? row["Company"]),
-        company_industry: str(row["Industry"]),
-        lead_status: str(row["Lead Status"]),
-        num_employees: row["Number of Employees"]
-          ? Math.round(parseNum(row["Number of Employees"]))
-          : null,
-        linkedin_company_url: str(
-          row["LinkedIn Company Page"] ?? row["LinkedIn Company URL"],
-        ),
-        lead_source: str(row["Lead Source"]),
-        lead_origin_multiple: str(
-          row["Lead Origin (multiple)"] ?? row["Lead Origin"],
-        ),
-        original_traffic_source: str(
-          row["Original Source"] ?? row["Original Traffic Source"],
-        ),
-        recent_deal_amount: row["Recent Deal Amount"]
-          ? parseNum(row["Recent Deal Amount"])
-          : null,
-        meeting_date: parseDatetime(row["Meeting Date"]),
-        utm_campaign: str(row["UTM Campaign"] ?? row["utm_campaign"]),
-        associated_company_id: parseBigInt(row["Associated Company ID"]),
-      };
-
-      if (hasHubspotId && row["Record ID"]) {
-        mapped.hubspot_record_id = parseBigInt(row["Record ID"]);
-      }
-
-      if (existingCols.has("upload_batch_id")) {
-        mapped.upload_batch_id = batch_id;
-      }
-
-      // Only include columns the DB actually has (if we detected the schema)
-      if (existingCols.size > 0) {
-        for (const key of Object.keys(mapped)) {
-          if (!existingCols.has(key)) delete mapped[key];
-        }
-      }
-
-      return mapped;
-    });
-
-    // Filter out rows without a record ID (only if using hubspot_record_id)
-    const validRows =
-      hasHubspotId && rows.some((r) => r.hubspot_record_id)
-        ? rows.filter((r) => r.hubspot_record_id !== null && r.hubspot_record_id !== undefined)
-        : rows;
-
-    if (validRows.length === 0) {
+    if (parsed.data.length === 0) {
       return NextResponse.json(
-        { error: "No valid rows found in CSV." },
+        { error: "No rows found in CSV." },
         { status: 400 },
       );
     }
 
-    const BATCH_SIZE = 500;
+    const batch_id = uuidv4();
+    const supabase = getServiceSupabase();
 
-    for (let i = 0; i < validRows.length; i += BATCH_SIZE) {
-      const batch = validRows.slice(i, i + BATCH_SIZE);
+    // --- Phase 1: Discover valid columns using a single test row ---
+    const badCols = new Set<string>();
+    const testRow = mapRow(parsed.data[0], batch_id);
 
-      let error: { message: string } | null | undefined = null;
-
-      if (hasHubspotId && batch.some((r) => r.hubspot_record_id)) {
-        const res = await supabase
-          .from("contacts")
-          .upsert(batch, { onConflict: "hubspot_record_id" });
-        error = res.error;
-
-        // If hubspot_record_id doesn't actually exist, fall back to insert
-        if (
-          error?.message?.includes("Could not find") &&
-          error.message.includes("hubspot_record_id")
-        ) {
-          const cleaned = batch.map((r) => {
-            const c = { ...r };
-            delete c.hubspot_record_id;
-            return c;
-          });
-          const res2 = await supabase.from("contacts").insert(cleaned);
-          error = res2.error;
-        }
-      } else {
-        const res = await supabase.from("contacts").insert(batch);
-        error = res.error;
+    function clean(row: Record<string, unknown>): Record<string, unknown> {
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(row)) {
+        if (!badCols.has(k)) out[k] = v;
       }
+      return out;
+    }
+
+    let testError: { message: string } | null | undefined = null;
+    for (let attempt = 0; attempt < 20; attempt++) {
+      const cleaned = clean(testRow);
+      const { error } = await supabase.from("contacts").insert([cleaned]);
+      testError = error;
+
+      if (!error) break;
+
+      const match = error.message.match(/Could not find the '(\w+)' column/);
+      if (match) {
+        badCols.add(match[1]);
+        continue;
+      }
+      break;
+    }
+
+    if (testError) {
+      throw new Error(`Contacts insert error (test row): ${testError.message}`);
+    }
+
+    // Test row inserted. Now insert the rest in batches.
+    const remaining = parsed.data.slice(1);
+
+    const BATCH_SIZE = 500;
+    for (let i = 0; i < remaining.length; i += BATCH_SIZE) {
+      const batch = remaining
+        .slice(i, i + BATCH_SIZE)
+        .map((row) => clean(mapRow(row, batch_id)));
+
+      const { error } = await supabase.from("contacts").insert(batch);
 
       if (error) {
-        // Last resort: retry stripping unknown columns one by one
-        let lastError: { message: string } | null | undefined = error;
-        let retryBatch = [...batch];
-        let retries = 0;
-        while (
-          lastError?.message?.includes("Could not find the") &&
-          retries < 5
-        ) {
-          const match = lastError.message.match(
-            /Could not find the '(\w+)' column/,
-          );
-          if (!match) break;
-          const badCol = match[1];
-          retryBatch = retryBatch.map((r) => {
-            const c = { ...r };
-            delete c[badCol];
-            return c;
-          });
-          const res = await supabase.from("contacts").insert(retryBatch);
-          lastError = res.error;
-          retries++;
-        }
-
-        if (lastError) {
-          throw new Error(
-            `Contacts upsert error (batch ${Math.floor(i / BATCH_SIZE)}): ${lastError.message}`,
-          );
-        }
+        throw new Error(
+          `Contacts insert error (batch ${Math.floor(i / BATCH_SIZE) + 1}): ${error.message}`,
+        );
       }
     }
 
@@ -206,9 +156,9 @@ export async function POST(request: NextRequest) {
     }
 
     return NextResponse.json({
-      rows_processed: validRows.length,
-      rows_skipped: rows.length - validRows.length,
+      rows_processed: parsed.data.length,
       batch_id,
+      columns_skipped: badCols.size > 0 ? Array.from(badCols) : undefined,
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unknown error";

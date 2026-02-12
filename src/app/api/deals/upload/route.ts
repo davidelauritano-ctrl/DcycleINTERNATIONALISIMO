@@ -35,6 +35,35 @@ function str(val: string | undefined | null): string | null {
   return val.trim();
 }
 
+function mapRow(row: Record<string, string>, batchId: string): Record<string, unknown> {
+  return {
+    hubspot_record_id: parseBigInt(row["Record ID"]),
+    deal_name: str(row["Deal Name"]) ?? "",
+    deal_stage: str(row["Deal Stage"]),
+    close_date: parseDatetime(row["Close Date"] ?? row["Close date"]),
+    deal_owner: str(row["Deal owner"] ?? row["Deal Owner"]),
+    amount: parseNum(row["Amount"]),
+    amount_corrected: row["Amount Corrected"]
+      ? parseNum(row["Amount Corrected"])
+      : null,
+    is_closed_won: parseBool(row["Is Closed Won"] ?? row["Closed Won"]),
+    is_closed_lost: parseBool(row["Is Closed Lost"] ?? row["Closed Lost"]),
+    lost_comments: str(
+      row["Lost Comments"] ?? row["Closed Lost Reason"] ?? row["lost_comments"],
+    ),
+    associated_contact: str(
+      row["Associated Contact"] ?? row["Associated Contacts"],
+    ),
+    associated_company: str(
+      row["Associated Company"] ?? row["Associated Companies"],
+    ),
+    associated_contact_id: parseBigInt(row["Associated Contact ID"]),
+    associated_company_id: parseBigInt(row["Associated Company ID"]),
+    upload_batch_id: batchId,
+    synced_at: new Date().toISOString(),
+  };
+}
+
 export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData();
@@ -57,143 +86,65 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const batch_id = uuidv4();
-    const supabase = getServiceSupabase();
-
-    // Probe which columns the deals table actually has
-    const { data: probeRow, error: probeError } = await supabase
-      .from("deals")
-      .select("*")
-      .limit(1);
-
-    const existingCols = new Set<string>();
-    if (!probeError && probeRow) {
-      // If table has rows, get column names from the first row
-      if (probeRow.length > 0) {
-        for (const key of Object.keys(probeRow[0])) existingCols.add(key);
-      }
-    }
-
-    // Build rows from CSV, only including columns the DB has
-    // If table is empty (can't detect schema), default to NO hubspot_record_id
-    const hasHubspotId = existingCols.size > 0 && existingCols.has("hubspot_record_id");
-
-    const rows = parsed.data.map((row) => {
-      const mapped: Record<string, unknown> = {
-        deal_name: str(row["Deal Name"]) ?? "",
-        deal_stage: str(row["Deal Stage"]),
-        close_date: parseDatetime(row["Close Date"] ?? row["Close date"]),
-        deal_owner: str(row["Deal owner"] ?? row["Deal Owner"]),
-        amount: parseNum(row["Amount"]),
-        is_closed_won: parseBool(row["Is Closed Won"] ?? row["Closed Won"]),
-        is_closed_lost: parseBool(row["Is Closed Lost"] ?? row["Closed Lost"]),
-        lost_comments: str(
-          row["Lost Comments"] ?? row["Closed Lost Reason"] ?? row["lost_comments"],
-        ),
-        associated_contact: str(
-          row["Associated Contact"] ?? row["Associated Contacts"],
-        ),
-        associated_company: str(
-          row["Associated Company"] ?? row["Associated Companies"],
-        ),
-        associated_contact_id: parseBigInt(row["Associated Contact ID"]),
-        associated_company_id: parseBigInt(row["Associated Company ID"]),
-      };
-
-      if (hasHubspotId && row["Record ID"]) {
-        mapped.hubspot_record_id = parseBigInt(row["Record ID"]);
-      }
-
-      // Only include optional columns if we confirmed they exist
-      if (existingCols.has("amount_corrected")) {
-        mapped.amount_corrected = row["Amount Corrected"]
-          ? parseNum(row["Amount Corrected"])
-          : null;
-      }
-
-      if (existingCols.has("upload_batch_id")) {
-        mapped.upload_batch_id = batch_id;
-      }
-
-      // Only include columns the DB actually has (if we detected the schema)
-      if (existingCols.size > 0) {
-        for (const key of Object.keys(mapped)) {
-          if (!existingCols.has(key)) delete mapped[key];
-        }
-      }
-
-      return mapped;
-    });
-
-    if (rows.length === 0) {
+    if (parsed.data.length === 0) {
       return NextResponse.json(
         { error: "No rows found in CSV." },
         { status: 400 },
       );
     }
 
-    const BATCH_SIZE = 500;
+    const batch_id = uuidv4();
+    const supabase = getServiceSupabase();
 
-    for (let i = 0; i < rows.length; i += BATCH_SIZE) {
-      const batch = rows.slice(i, i + BATCH_SIZE);
+    // --- Phase 1: Discover valid columns using a single test row ---
+    const badCols = new Set<string>();
+    const testRow = mapRow(parsed.data[0], batch_id);
 
-      let error: { message: string } | null | undefined = null;
-
-      // If the DB has hubspot_record_id, upsert on it
-      if (hasHubspotId && batch.some((r) => r.hubspot_record_id)) {
-        const res = await supabase
-          .from("deals")
-          .upsert(batch, { onConflict: "hubspot_record_id" });
-        error = res.error;
-
-        // If hubspot_record_id doesn't actually exist, fall back to insert
-        if (
-          error?.message?.includes("Could not find") &&
-          error.message.includes("hubspot_record_id")
-        ) {
-          const cleaned = batch.map((r) => {
-            const c = { ...r };
-            delete c.hubspot_record_id;
-            return c;
-          });
-          const res2 = await supabase.from("deals").insert(cleaned);
-          error = res2.error;
-        }
-      } else {
-        // No hubspot_record_id — plain insert
-        const res = await supabase.from("deals").insert(batch);
-        error = res.error;
+    function clean(row: Record<string, unknown>): Record<string, unknown> {
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(row)) {
+        if (!badCols.has(k)) out[k] = v;
       }
+      return out;
+    }
+
+    let testError: { message: string } | null | undefined = null;
+    for (let attempt = 0; attempt < 20; attempt++) {
+      const cleaned = clean(testRow);
+      const { error } = await supabase.from("deals").insert([cleaned]);
+      testError = error;
+
+      if (!error) break; // success — we know the valid columns
+
+      const match = error.message.match(/Could not find the '(\w+)' column/);
+      if (match) {
+        badCols.add(match[1]);
+        continue;
+      }
+      // Some other error (not a missing column) — break and report
+      break;
+    }
+
+    if (testError) {
+      throw new Error(`Deals insert error (test row): ${testError.message}`);
+    }
+
+    // Test row was inserted successfully as row #1.
+    // Now insert the remaining rows in batches.
+    const remaining = parsed.data.slice(1);
+
+    const BATCH_SIZE = 500;
+    for (let i = 0; i < remaining.length; i += BATCH_SIZE) {
+      const batch = remaining
+        .slice(i, i + BATCH_SIZE)
+        .map((row) => clean(mapRow(row, batch_id)));
+
+      const { error } = await supabase.from("deals").insert(batch);
 
       if (error) {
-        // Last resort: retry stripping unknown columns one by one
-        let lastError: { message: string } | null | undefined = error;
-        let retryBatch = [...batch];
-        let retries = 0;
-        while (
-          lastError?.message?.includes("Could not find the") &&
-          retries < 5
-        ) {
-          const match = lastError.message.match(
-            /Could not find the '(\w+)' column/,
-          );
-          if (!match) break;
-          const badCol = match[1];
-          retryBatch = retryBatch.map((r) => {
-            const c = { ...r };
-            delete c[badCol];
-            return c;
-          });
-          const res = await supabase.from("deals").insert(retryBatch);
-          lastError = res.error;
-          retries++;
-        }
-
-        if (lastError) {
-          throw new Error(
-            `Deals upsert error (batch ${Math.floor(i / BATCH_SIZE)}): ${lastError.message}`,
-          );
-        }
+        throw new Error(
+          `Deals insert error (batch ${Math.floor(i / BATCH_SIZE) + 1}): ${error.message}`,
+        );
       }
     }
 
@@ -206,8 +157,9 @@ export async function POST(request: NextRequest) {
     }
 
     return NextResponse.json({
-      rows_processed: rows.length,
+      rows_processed: parsed.data.length,
       batch_id,
+      columns_skipped: badCols.size > 0 ? Array.from(badCols) : undefined,
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unknown error";
