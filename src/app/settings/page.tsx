@@ -3,7 +3,7 @@
 import { AppShell } from "@/components/dashboard/app-shell";
 import { useState, useCallback, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
-import { Upload, RefreshCw, Database, Trash2, Clock } from "lucide-react";
+import { Upload, RefreshCw, Database, Trash2, Clock, Users, Handshake } from "lucide-react";
 
 export default function SettingsPage() {
   return (
@@ -18,6 +18,10 @@ export default function SettingsPage() {
         <div className="grid gap-6 lg:grid-cols-2">
           <HubSpotSync />
           <LinkedInUpload />
+        </div>
+        <div className="grid gap-6 lg:grid-cols-2">
+          <ContactsUpload />
+          <DealsUpload />
         </div>
         <UploadHistory />
         <MonthlySpendEditor />
@@ -197,10 +201,225 @@ function LinkedInUpload() {
   );
 }
 
+function ContactsUpload() {
+  const [uploading, setUploading] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState(false);
+
+  const handleFile = useCallback(async (file: File) => {
+    if (!file.name.endsWith(".csv")) {
+      setError("Please upload a CSV file");
+      return;
+    }
+    setUploading(true);
+    setResult(null);
+    setError(null);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch("/api/contacts/upload", {
+        method: "POST",
+        body: formData,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Upload failed");
+      setResult(
+        `Processed ${data.rows_processed} contacts${data.rows_skipped ? ` (${data.rows_skipped} skipped)` : ""}`
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      setUploading(false);
+    }
+  }, []);
+
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      setDragOver(false);
+      const file = e.dataTransfer.files[0];
+      if (file) handleFile(file);
+    },
+    [handleFile]
+  );
+
+  return (
+    <div className="rounded-xl border border-border bg-card p-6">
+      <div className="flex items-center gap-3 mb-4">
+        <div className="p-2 rounded-lg bg-green-500/10">
+          <Users className="h-5 w-5 text-green-400" />
+        </div>
+        <div>
+          <h2 className="text-lg font-semibold">Contacts CSV Upload</h2>
+          <p className="text-sm text-muted-foreground">
+            Upload exported CSV from HubSpot Contacts
+          </p>
+        </div>
+      </div>
+      <div
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragOver(true);
+        }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={handleDrop}
+        className={`border-2 border-dashed rounded-xl p-8 text-center transition-colors ${
+          dragOver
+            ? "border-primary bg-primary/5"
+            : "border-border hover:border-muted-foreground"
+        }`}
+      >
+        <Upload className="h-8 w-8 mx-auto mb-3 text-muted-foreground" />
+        <p className="text-sm text-muted-foreground mb-2">
+          Drag & drop your CSV file here, or
+        </p>
+        <label className="inline-block px-4 py-2 rounded-lg bg-secondary text-sm font-medium cursor-pointer hover:bg-secondary/80 transition-colors">
+          Browse Files
+          <input
+            type="file"
+            accept=".csv"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) handleFile(file);
+            }}
+          />
+        </label>
+        {uploading && (
+          <p className="mt-3 text-sm text-muted-foreground animate-pulse">
+            Processing CSV...
+          </p>
+        )}
+      </div>
+      {result && (
+        <p className="mt-3 text-sm text-primary bg-primary/10 px-3 py-2 rounded-lg">
+          {result}
+        </p>
+      )}
+      {error && (
+        <p className="mt-3 text-sm text-red-400 bg-red-400/10 px-3 py-2 rounded-lg">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function DealsUpload() {
+  const [uploading, setUploading] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState(false);
+
+  const handleFile = useCallback(async (file: File) => {
+    if (!file.name.endsWith(".csv")) {
+      setError("Please upload a CSV file");
+      return;
+    }
+    setUploading(true);
+    setResult(null);
+    setError(null);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch("/api/deals/upload", {
+        method: "POST",
+        body: formData,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Upload failed");
+      setResult(
+        `Processed ${data.rows_processed} deals${data.rows_skipped ? ` (${data.rows_skipped} skipped)` : ""}`
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      setUploading(false);
+    }
+  }, []);
+
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      setDragOver(false);
+      const file = e.dataTransfer.files[0];
+      if (file) handleFile(file);
+    },
+    [handleFile]
+  );
+
+  return (
+    <div className="rounded-xl border border-border bg-card p-6">
+      <div className="flex items-center gap-3 mb-4">
+        <div className="p-2 rounded-lg bg-amber-500/10">
+          <Handshake className="h-5 w-5 text-amber-400" />
+        </div>
+        <div>
+          <h2 className="text-lg font-semibold">Deals CSV Upload</h2>
+          <p className="text-sm text-muted-foreground">
+            Upload exported CSV from HubSpot Deals
+          </p>
+        </div>
+      </div>
+      <div
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragOver(true);
+        }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={handleDrop}
+        className={`border-2 border-dashed rounded-xl p-8 text-center transition-colors ${
+          dragOver
+            ? "border-primary bg-primary/5"
+            : "border-border hover:border-muted-foreground"
+        }`}
+      >
+        <Upload className="h-8 w-8 mx-auto mb-3 text-muted-foreground" />
+        <p className="text-sm text-muted-foreground mb-2">
+          Drag & drop your CSV file here, or
+        </p>
+        <label className="inline-block px-4 py-2 rounded-lg bg-secondary text-sm font-medium cursor-pointer hover:bg-secondary/80 transition-colors">
+          Browse Files
+          <input
+            type="file"
+            accept=".csv"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) handleFile(file);
+            }}
+          />
+        </label>
+        {uploading && (
+          <p className="mt-3 text-sm text-muted-foreground animate-pulse">
+            Processing CSV...
+          </p>
+        )}
+      </div>
+      {result && (
+        <p className="mt-3 text-sm text-primary bg-primary/10 px-3 py-2 rounded-lg">
+          {result}
+        </p>
+      )}
+      {error && (
+        <p className="mt-3 text-sm text-red-400 bg-red-400/10 px-3 py-2 rounded-lg">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
 function UploadHistory() {
-  const [batches, setBatches] = useState<
-    Array<{ upload_batch_id: string; uploaded_at: string; count: number }>
-  >([]);
+  type BatchEntry = {
+    upload_batch_id: string;
+    uploaded_at: string;
+    count: number;
+    source: "linkedin" | "contacts" | "deals";
+  };
+
+  const [batches, setBatches] = useState<BatchEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [reverting, setReverting] = useState<string | null>(null);
@@ -208,58 +427,114 @@ function UploadHistory() {
 
   const loadBatches = async () => {
     setLoading(true);
-    // Get distinct batch_ids with their upload times and row counts
-    const { data } = await supabase
+    const allBatches: BatchEntry[] = [];
+
+    // Load LinkedIn batches
+    const { data: liData } = await supabase
       .from("linkedin_ads_raw")
       .select("upload_batch_id, uploaded_at")
       .not("upload_batch_id", "is", null)
       .order("uploaded_at", { ascending: false });
 
-    if (data) {
+    if (liData) {
       const batchMap = new Map<string, { uploaded_at: string; count: number }>();
-      for (const row of data) {
+      for (const row of liData) {
         const bid = row.upload_batch_id;
         if (!bid) continue;
         const existing = batchMap.get(bid);
-        if (existing) {
-          existing.count++;
-        } else {
-          batchMap.set(bid, { uploaded_at: row.uploaded_at, count: 1 });
-        }
+        if (existing) existing.count++;
+        else batchMap.set(bid, { uploaded_at: row.uploaded_at, count: 1 });
       }
-      setBatches(
-        Array.from(batchMap.entries()).map(([id, v]) => ({
-          upload_batch_id: id,
-          uploaded_at: v.uploaded_at,
-          count: v.count,
-        }))
-      );
+      for (const [id, v] of batchMap) {
+        allBatches.push({ upload_batch_id: id, uploaded_at: v.uploaded_at, count: v.count, source: "linkedin" });
+      }
     }
+
+    // Load Contacts batches
+    const { data: cData } = await supabase
+      .from("contacts")
+      .select("upload_batch_id, created_at")
+      .not("upload_batch_id", "is", null)
+      .order("created_at", { ascending: false });
+
+    if (cData) {
+      const batchMap = new Map<string, { uploaded_at: string; count: number }>();
+      for (const row of cData) {
+        const bid = row.upload_batch_id;
+        if (!bid) continue;
+        const existing = batchMap.get(bid);
+        if (existing) existing.count++;
+        else batchMap.set(bid, { uploaded_at: row.created_at, count: 1 });
+      }
+      for (const [id, v] of batchMap) {
+        allBatches.push({ upload_batch_id: id, uploaded_at: v.uploaded_at, count: v.count, source: "contacts" });
+      }
+    }
+
+    // Load Deals batches
+    const { data: dData } = await supabase
+      .from("deals")
+      .select("upload_batch_id, synced_at")
+      .not("upload_batch_id", "is", null)
+      .order("synced_at", { ascending: false });
+
+    if (dData) {
+      const batchMap = new Map<string, { uploaded_at: string; count: number }>();
+      for (const row of dData) {
+        const bid = row.upload_batch_id;
+        if (!bid) continue;
+        const existing = batchMap.get(bid);
+        if (existing) existing.count++;
+        else batchMap.set(bid, { uploaded_at: row.synced_at, count: 1 });
+      }
+      for (const [id, v] of batchMap) {
+        allBatches.push({ upload_batch_id: id, uploaded_at: v.uploaded_at, count: v.count, source: "deals" });
+      }
+    }
+
+    allBatches.sort((a, b) => new Date(b.uploaded_at).getTime() - new Date(a.uploaded_at).getTime());
+    setBatches(allBatches);
     setLoading(false);
     setLoaded(true);
   };
 
-  const handleRevert = async (batchId: string) => {
-    if (!confirm(`Revert this upload? This will delete all rows from batch ${batchId.slice(0, 8)}...`)) {
+  const handleRevert = async (batchId: string, source: "linkedin" | "contacts" | "deals") => {
+    if (!confirm(`Revert this ${source} upload? This will delete all rows from batch ${batchId.slice(0, 8)}...`)) {
       return;
     }
     setReverting(batchId);
     setMessage(null);
+    const revertUrl =
+      source === "linkedin" ? "/api/linkedin/revert"
+      : source === "contacts" ? "/api/contacts/revert"
+      : "/api/deals/revert";
     try {
-      const res = await fetch("/api/linkedin/revert", {
+      const res = await fetch(revertUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ batch_id: batchId }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Revert failed");
-      setMessage(`Reverted ${data.rows_deleted} rows`);
+      setMessage(`Reverted ${data.rows_deleted} ${source} rows`);
       setBatches((prev) => prev.filter((b) => b.upload_batch_id !== batchId));
     } catch (err) {
       setMessage(`Error: ${err instanceof Error ? err.message : "Revert failed"}`);
     } finally {
       setReverting(null);
     }
+  };
+
+  const sourceLabel: Record<string, string> = {
+    linkedin: "LinkedIn Ads",
+    contacts: "Contacts",
+    deals: "Deals",
+  };
+
+  const sourceColor: Record<string, string> = {
+    linkedin: "bg-blue-500/20 text-blue-400",
+    contacts: "bg-green-500/20 text-green-400",
+    deals: "bg-amber-500/20 text-amber-400",
   };
 
   return (
@@ -272,7 +547,7 @@ function UploadHistory() {
           <div>
             <h2 className="text-lg font-semibold">Upload History</h2>
             <p className="text-sm text-muted-foreground">
-              LinkedIn Ads CSV upload batches - revert if needed
+              CSV upload batches - revert if needed
             </p>
           </div>
         </div>
@@ -289,7 +564,7 @@ function UploadHistory() {
 
       {loaded && batches.length === 0 && (
         <div className="text-center py-8 text-muted-foreground text-sm">
-          No upload batches found. Upload a LinkedIn CSV to get started.
+          No upload batches found. Upload a CSV to get started.
         </div>
       )}
 
@@ -298,6 +573,7 @@ function UploadHistory() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border">
+                <th className="text-left py-2 px-3 font-medium text-muted-foreground">Source</th>
                 <th className="text-left py-2 px-3 font-medium text-muted-foreground">Batch ID</th>
                 <th className="text-left py-2 px-3 font-medium text-muted-foreground">Uploaded</th>
                 <th className="text-right py-2 px-3 font-medium text-muted-foreground">Rows</th>
@@ -307,6 +583,11 @@ function UploadHistory() {
             <tbody>
               {batches.map((b) => (
                 <tr key={b.upload_batch_id} className="border-b border-border/50">
+                  <td className="py-2 px-3">
+                    <span className={`text-xs px-2 py-0.5 rounded-full ${sourceColor[b.source]}`}>
+                      {sourceLabel[b.source]}
+                    </span>
+                  </td>
                   <td className="py-2 px-3 font-mono text-xs">{b.upload_batch_id.slice(0, 12)}...</td>
                   <td className="py-2 px-3 text-muted-foreground">
                     {new Date(b.uploaded_at).toLocaleString()}
@@ -314,7 +595,7 @@ function UploadHistory() {
                   <td className="py-2 px-3 text-right">{b.count}</td>
                   <td className="py-2 px-3 text-right">
                     <button
-                      onClick={() => handleRevert(b.upload_batch_id)}
+                      onClick={() => handleRevert(b.upload_batch_id, b.source)}
                       disabled={reverting === b.upload_batch_id}
                       className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs text-red-400 hover:bg-red-400/10 disabled:opacity-50 transition-colors"
                     >

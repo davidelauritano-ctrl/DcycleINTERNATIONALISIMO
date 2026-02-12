@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS contacts (
   meeting_date TIMESTAMPTZ,
   utm_campaign TEXT,
   associated_company_id BIGINT,
+  upload_batch_id UUID,
   synced_at TIMESTAMPTZ DEFAULT now(),
   created_at TIMESTAMPTZ DEFAULT now()
 );
@@ -52,6 +53,7 @@ CREATE TABLE IF NOT EXISTS contacts (
 CREATE INDEX IF NOT EXISTS idx_contacts_company ON contacts (company_name);
 CREATE INDEX IF NOT EXISTS idx_contacts_traffic_source ON contacts (original_traffic_source);
 CREATE INDEX IF NOT EXISTS idx_contacts_utm ON contacts (utm_campaign);
+CREATE INDEX IF NOT EXISTS idx_contacts_batch ON contacts (upload_batch_id);
 
 -- ============================================================
 -- Table: deals (INPUT IMPORT MATRIX DEALS)
@@ -72,10 +74,12 @@ CREATE TABLE IF NOT EXISTS deals (
   associated_company TEXT,
   associated_contact_id BIGINT,
   associated_company_id BIGINT,
+  upload_batch_id UUID,
   synced_at TIMESTAMPTZ DEFAULT now()
 );
 
 CREATE INDEX IF NOT EXISTS idx_deals_company ON deals (associated_company);
+CREATE INDEX IF NOT EXISTS idx_deals_batch ON deals (upload_batch_id);
 
 -- ============================================================
 -- Table: linkedin_ads_raw (INPUT LINKEDIN REPORT PASTE)
