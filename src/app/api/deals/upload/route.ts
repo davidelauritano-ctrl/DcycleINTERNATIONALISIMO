@@ -97,12 +97,38 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Detect which columns the DB actually has by trying a small upsert first
+    const columnsToRemove: string[] = [];
     const BATCH_SIZE = 500;
+
     for (let i = 0; i < validRows.length; i += BATCH_SIZE) {
-      const batch = validRows.slice(i, i + BATCH_SIZE);
-      const { error } = await supabase
+      const batch = validRows.slice(i, i + BATCH_SIZE).map((row) => {
+        const clean = { ...row };
+        for (const col of columnsToRemove) {
+          delete (clean as Record<string, unknown>)[col];
+        }
+        return clean;
+      });
+
+      let { error } = await supabase
         .from("deals")
         .upsert(batch, { onConflict: "hubspot_record_id" });
+
+      // If a column doesn't exist, remove it and retry
+      while (error?.message?.includes("Could not find the")) {
+        const match = error.message.match(/Could not find the '(\w+)' column/);
+        if (!match) break;
+        columnsToRemove.push(match[1]);
+        const retryBatch = batch.map((row) => {
+          const clean = { ...row };
+          delete (clean as Record<string, unknown>)[match[1]];
+          return clean;
+        });
+        const retry = await supabase
+          .from("deals")
+          .upsert(retryBatch, { onConflict: "hubspot_record_id" });
+        error = retry.error;
+      }
 
       if (error) {
         throw new Error(
