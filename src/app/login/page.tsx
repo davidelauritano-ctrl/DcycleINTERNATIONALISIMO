@@ -27,27 +27,33 @@ function LoginForm() {
     setError("");
     setMessage("");
 
-    if (isSignUp) {
-      const { error: signUpError } = await supabase.auth.signUp({
-        email,
-        password,
-      });
-      if (signUpError) {
-        setError(signUpError.message);
+    try {
+      if (isSignUp) {
+        const { error: signUpError } = await supabase.auth.signUp({
+          email,
+          password,
+        });
+        if (signUpError) {
+          setError(signUpError.message);
+        } else {
+          setMessage("Check your email for a confirmation link.");
+        }
       } else {
-        setMessage("Check your email for a confirmation link.");
+        const { data, error: signInError } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
+        if (signInError) {
+          setError(signInError.message);
+        } else if (!data.session) {
+          setError("Sign-in returned no session. Check your Supabase email confirmation settings.");
+        } else {
+          window.location.href = redirectTo;
+          return;
+        }
       }
-    } else {
-      const { error: signInError } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-      if (signInError) {
-        setError(signInError.message);
-      } else {
-        window.location.href = redirectTo;
-        return;
-      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unexpected error — check browser console");
     }
     setLoading(false);
   };
