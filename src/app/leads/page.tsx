@@ -1,7 +1,6 @@
 "use client";
 
 import { AppShell } from "@/components/dashboard/app-shell";
-import { supabase } from "@/lib/supabase";
 import { useEffect, useState, useMemo } from "react";
 import { formatCurrency, monthKeyToLabel, sortMonthKeys, tierColor } from "@/lib/utils";
 import type { LeadEnriched } from "@/types";
@@ -19,7 +18,8 @@ export default function LeadsPage() {
 
   useEffect(() => {
     async function loadData() {
-      const { data } = await supabase.from("leads_enriched").select("*");
+      const res = await fetch("/api/data?entity=leads_enriched");
+      const data = res.ok ? await res.json() : [];
       setLeads((data as LeadEnriched[]) || []);
       setLoading(false);
     }

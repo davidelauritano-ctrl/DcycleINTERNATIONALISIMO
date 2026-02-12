@@ -18,14 +18,18 @@ export default function CampaignsPage() {
 
   useEffect(() => {
     async function loadData() {
-      const [campRes, leadsRes, perfRes] = await Promise.all([
-        supabase.from("campaign_names").select("*").order("country_code"),
-        supabase.from("leads_enriched").select("*"),
-        supabase.from("linkedin_ads_performance").select("*"),
+      const fetchEntity = async <T,>(entity: string): Promise<T[]> => {
+        const res = await fetch(`/api/data?entity=${entity}`);
+        return res.ok ? res.json() : [];
+      };
+      const [campData, leadsData, perfData] = await Promise.all([
+        fetchEntity<CampaignName>("campaign_names"),
+        fetchEntity<LeadEnriched>("leads_enriched"),
+        fetchEntity<LinkedInAdsPerformance>("linkedin_ads_performance"),
       ]);
-      setCampaigns((campRes.data as CampaignName[]) || []);
-      setLeads((leadsRes.data as LeadEnriched[]) || []);
-      setLinkedinPerf((perfRes.data as LinkedInAdsPerformance[]) || []);
+      setCampaigns(campData);
+      setLeads(leadsData);
+      setLinkedinPerf(perfData);
       setLoading(false);
     }
     loadData();

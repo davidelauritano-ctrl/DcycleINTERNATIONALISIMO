@@ -5,12 +5,17 @@ import { KpiCard } from "@/components/dashboard/kpi-card";
 import { ChannelPerformanceTable, CountryPerformanceTable } from "@/components/tables/performance-table";
 import { LineChartComponent } from "@/components/charts/line-chart";
 import { BarChartComponent } from "@/components/charts/bar-chart";
-import { supabase } from "@/lib/supabase";
 import { useEffect, useState, useMemo } from "react";
 import { formatCurrency, formatNumber, safeDivide, sortMonthKeys, monthKeyToLabel } from "@/lib/utils";
 import type { LeadEnriched, LinkedInAdsPerformance, MonthlySpend, ChannelMonthlyMetrics, CountryMonthlyMetrics } from "@/types";
 import { Users, Target, Handshake, TrendingUp, DollarSign, BarChart3, PieChart } from "lucide-react";
 import { DashboardEmptyState } from "@/components/dashboard/empty-state";
+
+async function fetchEntity<T>(entity: string): Promise<T[]> {
+  const res = await fetch(`/api/data?entity=${entity}`);
+  if (!res.ok) return [];
+  return res.json();
+}
 
 export default function DashboardPage() {
   const [leads, setLeads] = useState<LeadEnriched[]>([]);
@@ -21,14 +26,14 @@ export default function DashboardPage() {
 
   useEffect(() => {
     async function loadData() {
-      const [leadsRes, perfRes, spendRes] = await Promise.all([
-        supabase.from("leads_enriched").select("*"),
-        supabase.from("linkedin_ads_performance").select("*"),
-        supabase.from("monthly_spend").select("*"),
+      const [leadsData, perfData, spendData] = await Promise.all([
+        fetchEntity<LeadEnriched>("leads_enriched"),
+        fetchEntity<LinkedInAdsPerformance>("linkedin_ads_performance"),
+        fetchEntity<MonthlySpend>("monthly_spend"),
       ]);
-      setLeads((leadsRes.data as LeadEnriched[]) || []);
-      setLinkedinPerf((perfRes.data as LinkedInAdsPerformance[]) || []);
-      setMonthlySpend((spendRes.data as MonthlySpend[]) || []);
+      setLeads(leadsData);
+      setLinkedinPerf(perfData);
+      setMonthlySpend(spendData);
       setLoading(false);
     }
     loadData();
