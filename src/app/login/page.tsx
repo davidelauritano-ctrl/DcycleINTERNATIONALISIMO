@@ -1,8 +1,8 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 
 function LoginForm() {
   const [email, setEmail] = useState("");
@@ -11,9 +11,15 @@ function LoginForm() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
-  const router = useRouter();
   const searchParams = useSearchParams();
   const redirectTo = searchParams.get("redirect") || "/";
+  const authError = searchParams.get("error");
+
+  useEffect(() => {
+    if (authError === "auth_callback_failed") {
+      setError("Authentication failed. Please try again.");
+    }
+  }, [authError]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -39,8 +45,8 @@ function LoginForm() {
       if (signInError) {
         setError(signInError.message);
       } else {
-        router.refresh();
-        router.push(redirectTo);
+        window.location.href = redirectTo;
+        return;
       }
     }
     setLoading(false);
@@ -53,7 +59,12 @@ function LoginForm() {
     }
     setLoading(true);
     setError("");
-    const { error: magicError } = await supabase.auth.signInWithOtp({ email });
+    const { error: magicError } = await supabase.auth.signInWithOtp({
+      email,
+      options: {
+        emailRedirectTo: `${window.location.origin}/auth/callback?redirect=${encodeURIComponent(redirectTo)}`,
+      },
+    });
     if (magicError) {
       setError(magicError.message);
     } else {
