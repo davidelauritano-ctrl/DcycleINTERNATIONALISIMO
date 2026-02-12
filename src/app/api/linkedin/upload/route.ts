@@ -74,7 +74,7 @@ export async function POST(request: NextRequest) {
       upload_batch_id: batch_id,
     }));
 
-    // Upsert in batches of 500
+    // Upsert in batches of 500 (falls back to delete+insert if unique constraint missing)
     const BATCH_SIZE = 500;
     for (let i = 0; i < rows.length; i += BATCH_SIZE) {
       const batch = rows.slice(i, i + BATCH_SIZE);
@@ -85,9 +85,30 @@ export async function POST(request: NextRequest) {
         });
 
       if (error) {
-        throw new Error(
-          `LinkedIn ads upsert error (batch ${i}): ${error.message}`
-        );
+        // If unique constraint is missing, fall back to delete-then-insert
+        if (error.message.includes("no unique or exclusion constraint")) {
+          // Delete existing rows that match this batch's date+campaign combos
+          for (const row of batch) {
+            await supabase
+              .from("linkedin_ads_raw")
+              .delete()
+              .eq("start_date", row.start_date)
+              .eq("campaign_name", row.campaign_name)
+              .eq("creative_name", row.creative_name ?? "");
+          }
+          const { error: insertErr } = await supabase
+            .from("linkedin_ads_raw")
+            .insert(batch);
+          if (insertErr) {
+            throw new Error(
+              `LinkedIn ads insert error (batch ${i / BATCH_SIZE}): ${insertErr.message}`
+            );
+          }
+        } else {
+          throw new Error(
+            `LinkedIn ads upsert error (batch ${i / BATCH_SIZE}): ${error.message}`
+          );
+        }
       }
     }
 
