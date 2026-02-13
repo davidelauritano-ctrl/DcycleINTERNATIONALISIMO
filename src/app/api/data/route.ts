@@ -335,10 +335,13 @@ export async function GET(request: NextRequest) {
     if (entity === "leads_enriched") {
       const debugMode = searchParams.get("debug") === "true";
 
-      // Prefer unified leads table if it has data (single-CSV upload)
+      // Prefer unified leads table ONLY if it has rows uploaded via our route
+      // (upload_batch_id is not null). This avoids using pre-existing leads
+      // data that has a different schema.
       const { data: directLeads, error: leadsErr } = await supabase
         .from("leads")
-        .select("*");
+        .select("*")
+        .not("upload_batch_id", "is", null);
 
       if (!leadsErr && directLeads && directLeads.length > 0) {
         // Map the leads table rows to the LeadEnriched shape
