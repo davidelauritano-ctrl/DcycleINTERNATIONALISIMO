@@ -97,12 +97,6 @@ export async function POST() {
       }
     }
 
-    // ── Refresh materialized views ───────────────────────────
-    const { error: rpcError } = await supabase.rpc("refresh_materialized_views");
-    if (rpcError) {
-      console.error("Failed to refresh materialized views:", rpcError.message);
-    }
-
     return NextResponse.json({
       contacts_synced: contactRows.length,
       deals_synced: dealRows.length,

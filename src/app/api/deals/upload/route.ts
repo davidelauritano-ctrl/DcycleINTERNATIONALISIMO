@@ -148,14 +148,6 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Refresh materialized views
-    const { error: rpcError } = await supabase.rpc(
-      "refresh_materialized_views",
-    );
-    if (rpcError) {
-      console.error("Failed to refresh materialized views:", rpcError.message);
-    }
-
     return NextResponse.json({
       rows_processed: parsed.data.length,
       batch_id,

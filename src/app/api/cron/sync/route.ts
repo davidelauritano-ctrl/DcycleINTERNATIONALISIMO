@@ -92,9 +92,6 @@ export async function GET(request: NextRequest) {
       if (error) throw new Error(`Deals batch ${i}: ${error.message}`);
     }
 
-    // Refresh views
-    await supabase.rpc("refresh_materialized_views");
-
     return NextResponse.json({
       success: true,
       contacts_synced: contactRows.length,

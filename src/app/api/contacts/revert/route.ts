@@ -40,8 +40,6 @@ export async function POST(request: NextRequest) {
       throw new Error(`Delete error: ${deleteError.message}`);
     }
 
-    await supabase.rpc("refresh_materialized_views");
-
     return NextResponse.json({
       reverted: true,
       rows_deleted: count,
