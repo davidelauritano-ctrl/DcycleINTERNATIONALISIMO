@@ -116,7 +116,7 @@ export async function POST(request: NextRequest) {
     let testError: { message: string } | null | undefined = null;
     for (let attempt = 0; attempt < 20; attempt++) {
       const cleaned = clean(testRow);
-      const { error } = await supabase.from("deals").insert([cleaned]);
+      const { error } = await supabase.from("deals").upsert([cleaned], { onConflict: "hubspot_record_id" });
       testError = error;
 
       if (!error) break; // success — we know the valid columns
@@ -134,8 +134,8 @@ export async function POST(request: NextRequest) {
       throw new Error(`Deals insert error (test row): ${testError.message}`);
     }
 
-    // Test row was inserted successfully as row #1.
-    // Now insert the remaining rows in batches.
+    // Test row upserted successfully as row #1.
+    // Now upsert the remaining rows in batches.
     const remaining = parsed.data.slice(1);
 
     const BATCH_SIZE = 500;
@@ -144,7 +144,7 @@ export async function POST(request: NextRequest) {
         .slice(i, i + BATCH_SIZE)
         .map((row) => clean(mapRow(row, batch_id)));
 
-      const { error } = await supabase.from("deals").insert(batch);
+      const { error } = await supabase.from("deals").upsert(batch, { onConflict: "hubspot_record_id" });
 
       if (error) {
         throw new Error(
