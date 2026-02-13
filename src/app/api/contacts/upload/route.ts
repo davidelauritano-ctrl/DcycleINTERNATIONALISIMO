@@ -29,37 +29,54 @@ function str(val: string | undefined | null): string | null {
   return val.trim();
 }
 
+/** Case-insensitive column lookup across multiple possible header names */
+function col(row: Record<string, string>, ...names: string[]): string | undefined {
+  // Exact match first (fast path)
+  for (const name of names) {
+    if (name in row && row[name] !== "") return row[name];
+  }
+  // Case-insensitive fallback
+  const entries = Object.entries(row);
+  for (const name of names) {
+    const lower = name.toLowerCase();
+    for (const [k, v] of entries) {
+      if (k.trim().toLowerCase() === lower && v !== "") return v;
+    }
+  }
+  return undefined;
+}
+
 function mapRow(row: Record<string, string>, batchId: string): Record<string, unknown> {
   return {
-    hubspot_record_id: parseBigInt(row["Record ID"]),
-    first_name: str(row["First Name"]),
-    last_name: str(row["Last Name"]),
-    email: str(row["Email"]),
-    phone: str(row["Phone Number"] ?? row["Phone"]),
-    first_email_date: parseDatetime(row["First Email Date"]),
-    contact_owner: str(row["Contact owner"] ?? row["Contact Owner"]),
-    company_name: str(row["Company Name"] ?? row["Company"]),
-    company_industry: str(row["Industry"]),
-    lead_status: str(row["Lead Status"]),
-    num_employees: row["Number of Employees"]
-      ? Math.round(parseNum(row["Number of Employees"]))
+    hubspot_record_id: parseBigInt(col(row, "Record ID", "RecordID", "HubSpot Record ID")),
+    first_name: str(col(row, "First Name", "FirstName")),
+    last_name: str(col(row, "Last Name", "LastName")),
+    email: str(col(row, "Email", "Email Address")),
+    phone: str(col(row, "Phone Number", "Phone")),
+    first_email_date: parseDatetime(col(row, "First Email Date")),
+    contact_owner: str(col(row, "Contact owner", "Contact Owner")),
+    company_name: str(col(row, "Company Name", "Company", "Associated Company", "Associated Companies")),
+    company_industry: str(col(row, "Industry", "Company Industry")),
+    lead_status: str(col(row, "Lead Status")),
+    num_employees: col(row, "Number of Employees", "Employees")
+      ? Math.round(parseNum(col(row, "Number of Employees", "Employees")))
       : null,
     linkedin_company_url: str(
-      row["LinkedIn Company Page"] ?? row["LinkedIn Company URL"],
+      col(row, "LinkedIn Company Page", "LinkedIn Company URL"),
     ),
-    lead_source: str(row["Lead Source"]),
+    lead_source: str(col(row, "Lead Source")),
     lead_origin_multiple: str(
-      row["Lead Origin (multiple)"] ?? row["Lead Origin"],
+      col(row, "Lead Origin (multiple)", "Lead Origin"),
     ),
     original_traffic_source: str(
-      row["Original Source"] ?? row["Original Traffic Source"],
+      col(row, "Original Source", "Original Traffic Source"),
     ),
-    recent_deal_amount: row["Recent Deal Amount"]
-      ? parseNum(row["Recent Deal Amount"])
+    recent_deal_amount: col(row, "Recent Deal Amount")
+      ? parseNum(col(row, "Recent Deal Amount"))
       : null,
-    meeting_date: parseDatetime(row["Meeting Date"]),
-    utm_campaign: str(row["UTM Campaign"] ?? row["utm_campaign"]),
-    associated_company_id: parseBigInt(row["Associated Company ID"]),
+    meeting_date: parseDatetime(col(row, "Meeting Date")),
+    utm_campaign: str(col(row, "UTM Campaign", "utm_campaign")),
+    associated_company_id: parseBigInt(col(row, "Associated Company ID", "Associated Company IDs")),
     upload_batch_id: batchId,
     synced_at: new Date().toISOString(),
   };
@@ -78,6 +95,7 @@ export async function POST(request: NextRequest) {
     const parsed = Papa.parse<Record<string, string>>(csvText, {
       header: true,
       skipEmptyLines: true,
+      transformHeader: (h) => h.trim().replace(/^\uFEFF/, ""),
     });
 
     if (parsed.errors.length > 0 && parsed.data.length === 0) {
@@ -93,6 +111,10 @@ export async function POST(request: NextRequest) {
         { status: 400 },
       );
     }
+
+    // Log detected CSV headers for debugging
+    const csvHeaders = Object.keys(parsed.data[0]);
+    console.log("Contacts CSV headers:", csvHeaders);
 
     const batch_id = uuidv4();
     const supabase = getServiceSupabase();
@@ -129,6 +151,10 @@ export async function POST(request: NextRequest) {
       throw new Error(`Contacts insert error (test row): ${testError.message}`);
     }
 
+    if (badCols.size > 0) {
+      console.warn("Contacts upload: DB columns not found (skipped):", Array.from(badCols));
+    }
+
     // Test row upserted. Now upsert the rest in batches.
     const remaining = parsed.data.slice(1);
 
@@ -150,6 +176,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       rows_processed: parsed.data.length,
       batch_id,
+      csv_headers: csvHeaders,
       columns_skipped: badCols.size > 0 ? Array.from(badCols) : undefined,
     });
   } catch (err: unknown) {

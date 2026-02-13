@@ -35,34 +35,50 @@ function str(val: string | undefined | null): string | null {
   return val.trim();
 }
 
+/** Case-insensitive column lookup across multiple possible header names */
+function col(row: Record<string, string>, ...names: string[]): string | undefined {
+  // Exact match first (fast path)
+  for (const name of names) {
+    if (name in row && row[name] !== "") return row[name];
+  }
+  // Case-insensitive fallback
+  const entries = Object.entries(row);
+  for (const name of names) {
+    const lower = name.toLowerCase();
+    for (const [k, v] of entries) {
+      if (k.trim().toLowerCase() === lower && v !== "") return v;
+    }
+  }
+  return undefined;
+}
+
 function mapRow(row: Record<string, string>, batchId: string): Record<string, unknown> {
   return {
-    hubspot_record_id: parseBigInt(row["Record ID"]),
-    deal_name: str(row["Deal Name"]) ?? "",
-    deal_stage: str(row["Deal Stage"]),
-    close_date: parseDatetime(row["Close Date"] ?? row["Close date"]),
-    deal_owner: str(row["Deal owner"] ?? row["Deal Owner"]),
-    amount: parseNum(row["Amount"] ?? row["Deal Amount"]),
-    amount_corrected: (row["Amount Corrected"] ?? row["Deal Amount Corrected"])
-      ? parseNum(row["Amount Corrected"] ?? row["Deal Amount Corrected"])
+    hubspot_record_id: parseBigInt(col(row, "Record ID", "RecordID", "HubSpot Record ID")),
+    deal_name: str(col(row, "Deal Name", "DealName")) ?? "",
+    deal_stage: str(col(row, "Deal Stage", "DealStage")),
+    close_date: parseDatetime(col(row, "Close Date", "Close date", "CloseDate")),
+    deal_owner: str(col(row, "Deal owner", "Deal Owner", "DealOwner")),
+    amount: parseNum(col(row, "Amount", "Deal Amount", "DealAmount")),
+    amount_corrected: col(row, "Amount Corrected", "Deal Amount Corrected")
+      ? parseNum(col(row, "Amount Corrected", "Deal Amount Corrected"))
       : null,
-    is_closed_won: parseBool(row["Is Closed Won"] ?? row["Closed Won"]),
-    is_closed_lost: parseBool(row["Is Closed Lost"] ?? row["Closed Lost"]),
+    is_closed_won: parseBool(col(row, "Is Closed Won", "Closed Won")),
+    is_closed_lost: parseBool(col(row, "Is Closed Lost", "Closed Lost")),
     lost_comments: str(
-      row["Lost Comments"] ?? row["Closed Lost Reason"] ?? row["lost_comments"],
+      col(row, "Lost Comments", "Closed Lost Reason", "lost_comments"),
     ),
     associated_contact: str(
-      row["Associated Contact"] ?? row["Associated Contacts"],
+      col(row, "Associated Contact", "Associated Contacts", "Contact Name"),
     ),
     associated_company: str(
-      row["Associated Company"] ?? row["Associated Companies"] ??
-      row["Company Name"] ?? row["Company"],
+      col(row, "Associated Company", "Associated Companies", "Company Name", "Company"),
     ),
     associated_contact_id: parseBigInt(
-      row["Associated Contact ID"] ?? row["Associated Contact IDs"],
+      col(row, "Associated Contact ID", "Associated Contact IDs"),
     ),
     associated_company_id: parseBigInt(
-      row["Associated Company ID"] ?? row["Associated Company IDs"],
+      col(row, "Associated Company ID", "Associated Company IDs"),
     ),
     upload_batch_id: batchId,
     synced_at: new Date().toISOString(),
@@ -82,6 +98,7 @@ export async function POST(request: NextRequest) {
     const parsed = Papa.parse<Record<string, string>>(csvText, {
       header: true,
       skipEmptyLines: true,
+      transformHeader: (h) => h.trim().replace(/^\uFEFF/, ""),
     });
 
     if (parsed.errors.length > 0 && parsed.data.length === 0) {
@@ -97,6 +114,10 @@ export async function POST(request: NextRequest) {
         { status: 400 },
       );
     }
+
+    // Log detected CSV headers for debugging
+    const csvHeaders = Object.keys(parsed.data[0]);
+    console.log("Deals CSV headers:", csvHeaders);
 
     const batch_id = uuidv4();
     const supabase = getServiceSupabase();
@@ -134,6 +155,10 @@ export async function POST(request: NextRequest) {
       throw new Error(`Deals insert error (test row): ${testError.message}`);
     }
 
+    if (badCols.size > 0) {
+      console.warn("Deals upload: DB columns not found (skipped):", Array.from(badCols));
+    }
+
     // Test row upserted successfully as row #1.
     // Now upsert the remaining rows in batches.
     const remaining = parsed.data.slice(1);
@@ -156,6 +181,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       rows_processed: parsed.data.length,
       batch_id,
+      csv_headers: csvHeaders,
       columns_skipped: badCols.size > 0 ? Array.from(badCols) : undefined,
     });
   } catch (err: unknown) {

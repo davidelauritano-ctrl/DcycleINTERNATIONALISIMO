@@ -90,8 +90,9 @@ function normalizeChannel(raw: string | null | undefined): string | null {
 /**
  * Compute leads_enriched from raw contacts + deals + campaign_names + mql_to_sql.
  * Always computed in JS — never relies on the materialized view.
+ * When debug=true, returns { data, _debug } with join diagnostics.
  */
-async function computeLeadsEnriched(supabase: SupabaseClient) {
+async function computeLeadsEnriched(supabase: SupabaseClient, debug = false) {
   const [contacts, deals, campaignNames, mqlToSql] = await Promise.all([
     safeFetch(supabase, "contacts"),
     safeFetch(supabase, "deals"),
@@ -151,7 +152,10 @@ async function computeLeadsEnriched(supabase: SupabaseClient) {
     }
   }
 
-  return contacts.map((c) => {
+  // Track join match counts for debug mode
+  const matchCounts = { byContactId: 0, byCompanyId: 0, byCompanyName: 0, byContactName: 0, noMatch: 0 };
+
+  const rows = contacts.map((c) => {
     const campaignRaw =
       (c.utm_campaign && String(c.utm_campaign).trim()) ||
       (c.lead_origin_multiple && String(c.lead_origin_multiple).trim()) ||
@@ -172,12 +176,18 @@ async function computeLeadsEnriched(supabase: SupabaseClient) {
     let dealAmount = 0;
     if (contactRecordId && dealByContactId.has(contactRecordId)) {
       dealAmount = dealByContactId.get(contactRecordId)!;
+      matchCounts.byContactId++;
     } else if (contactCompanyId && dealByCompanyId.has(contactCompanyId)) {
       dealAmount = dealByCompanyId.get(contactCompanyId)!;
+      matchCounts.byCompanyId++;
     } else if (companyNameLower && dealByCompanyName.has(companyNameLower)) {
       dealAmount = dealByCompanyName.get(companyNameLower)!;
+      matchCounts.byCompanyName++;
     } else if (fullName && dealByContactName.has(fullName)) {
       dealAmount = dealByContactName.get(fullName)!;
+      matchCounts.byContactName++;
+    } else {
+      matchCounts.noMatch++;
     }
 
     // MQL-to-SQL meeting set: case-insensitive company name lookup
@@ -211,6 +221,40 @@ async function computeLeadsEnriched(supabase: SupabaseClient) {
       first_meeting_set: meetingSet,
     };
   });
+
+  if (debug) {
+    // Sample data for diagnosing join issues
+    const sampleDeal = deals[0] ?? {};
+    const sampleContact = contacts[0] ?? {};
+    return {
+      data: rows,
+      _debug: {
+        total_contacts: contacts.length,
+        total_deals: deals.length,
+        deals_with_amount: deals.filter(d => Number(d.amount_corrected ?? d.amount ?? 0) > 0).length,
+        deal_columns_present: deals.length > 0 ? Object.keys(sampleDeal) : [],
+        contact_columns_present: contacts.length > 0 ? Object.keys(sampleContact) : [],
+        deal_maps: {
+          byContactId_entries: dealByContactId.size,
+          byCompanyId_entries: dealByCompanyId.size,
+          byCompanyName_entries: dealByCompanyName.size,
+          byCompanyName_sample: Array.from(dealByCompanyName.keys()).slice(0, 5),
+          byContactName_entries: dealByContactName.size,
+          byContactName_sample: Array.from(dealByContactName.keys()).slice(0, 5),
+        },
+        contact_fields: {
+          with_hubspot_record_id: contacts.filter(c => c.hubspot_record_id).length,
+          with_associated_company_id: contacts.filter(c => c.associated_company_id).length,
+          with_company_name: contacts.filter(c => c.company_name).length,
+          company_name_sample: contacts.slice(0, 5).map(c => c.company_name ?? "(null)"),
+        },
+        match_counts: matchCounts,
+        total_pipeline: rows.reduce((s, r) => s + r.deal_amount, 0),
+      },
+    };
+  }
+
+  return rows;
 }
 
 /**
@@ -288,7 +332,8 @@ export async function GET(request: NextRequest) {
 
     // Always compute leads_enriched from raw tables (view may not exist)
     if (entity === "leads_enriched") {
-      const computed = await computeLeadsEnriched(supabase);
+      const debugMode = searchParams.get("debug") === "true";
+      const computed = await computeLeadsEnriched(supabase, debugMode);
       return NextResponse.json(computed);
     }
 
