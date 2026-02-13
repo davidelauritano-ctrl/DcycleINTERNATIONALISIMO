@@ -3,7 +3,7 @@
 import { AppShell } from "@/components/dashboard/app-shell";
 import { useState, useCallback, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
-import { Upload, RefreshCw, Database, Trash2, Clock, Users, Handshake } from "lucide-react";
+import { Upload, RefreshCw, Database, Trash2, Clock, Users, Handshake, FileSpreadsheet } from "lucide-react";
 
 export default function SettingsPage() {
   return (
@@ -15,6 +15,7 @@ export default function SettingsPage() {
             Manage data sources and integrations
           </p>
         </div>
+        <LeadsUpload />
         <div className="grid gap-6 lg:grid-cols-2">
           <HubSpotSync />
           <LinkedInUpload />
@@ -31,6 +32,131 @@ export default function SettingsPage() {
         </div>
       </div>
     </AppShell>
+  );
+}
+
+function LeadsUpload() {
+  const [uploading, setUploading] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState(false);
+
+  const handleFile = useCallback(async (file: File) => {
+    if (!file.name.endsWith(".csv")) {
+      setError("Please upload a CSV file");
+      return;
+    }
+    setUploading(true);
+    setResult(null);
+    setError(null);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch("/api/leads/upload", {
+        method: "POST",
+        body: formData,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Upload failed");
+      const skipped = data.columns_skipped?.length
+        ? ` (columns skipped: ${data.columns_skipped.join(", ")})`
+        : "";
+      setResult(
+        `Processed ${data.rows_processed} leads${skipped}`
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      setUploading(false);
+    }
+  }, []);
+
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      setDragOver(false);
+      const file = e.dataTransfer.files[0];
+      if (file) handleFile(file);
+    },
+    [handleFile]
+  );
+
+  const EXPECTED_HEADERS = [
+    "First Name", "Last Name", "First Email Date", "Week", "Company",
+    "Industry", "Lead Status", "First Meeting Done",
+    "Number of employees from Company", "TIER", "Campaign", "Channel",
+    "Company Deal", "Month", "Year", "Country", "Campaign Name correct",
+  ];
+
+  return (
+    <div className="rounded-xl border-2 border-primary/30 bg-card p-6">
+      <div className="flex items-center gap-3 mb-4">
+        <div className="p-2 rounded-lg bg-primary/10">
+          <FileSpreadsheet className="h-5 w-5 text-primary" />
+        </div>
+        <div>
+          <h2 className="text-lg font-semibold">Leads CSV Upload</h2>
+          <p className="text-sm text-muted-foreground">
+            Upload a single CSV with all lead + deal + campaign data
+          </p>
+        </div>
+      </div>
+      <details className="mb-4 text-xs text-muted-foreground">
+        <summary className="cursor-pointer hover:text-foreground transition-colors font-medium">
+          Expected CSV headers
+        </summary>
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {EXPECTED_HEADERS.map((h) => (
+            <code key={h} className="bg-muted px-1.5 py-0.5 rounded text-xs">{h}</code>
+          ))}
+        </div>
+      </details>
+      <div
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragOver(true);
+        }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={handleDrop}
+        className={`border-2 border-dashed rounded-xl p-8 text-center transition-colors ${
+          dragOver
+            ? "border-primary bg-primary/5"
+            : "border-border hover:border-muted-foreground"
+        }`}
+      >
+        <Upload className="h-8 w-8 mx-auto mb-3 text-muted-foreground" />
+        <p className="text-sm text-muted-foreground mb-2">
+          Drag & drop your CSV file here, or
+        </p>
+        <label className="inline-block px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium cursor-pointer hover:bg-primary/90 transition-colors">
+          Browse Files
+          <input
+            type="file"
+            accept=".csv"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) handleFile(file);
+            }}
+          />
+        </label>
+        {uploading && (
+          <p className="mt-3 text-sm text-muted-foreground animate-pulse">
+            Processing CSV...
+          </p>
+        )}
+      </div>
+      {result && (
+        <p className="mt-3 text-sm text-primary bg-primary/10 px-3 py-2 rounded-lg">
+          {result}
+        </p>
+      )}
+      {error && (
+        <p className="mt-3 text-sm text-red-400 bg-red-400/10 px-3 py-2 rounded-lg">
+          {error}
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -416,7 +542,7 @@ function UploadHistory() {
     upload_batch_id: string;
     uploaded_at: string;
     count: number;
-    source: "linkedin" | "contacts" | "deals";
+    source: "linkedin" | "contacts" | "deals" | "leads";
   };
 
   const [batches, setBatches] = useState<BatchEntry[]>([]);
@@ -425,80 +551,55 @@ function UploadHistory() {
   const [reverting, setReverting] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
+  const loadBatchesFromTable = async (
+    table: string,
+    timeCol: string,
+    source: BatchEntry["source"]
+  ): Promise<BatchEntry[]> => {
+    try {
+      const { data } = await supabase
+        .from(table)
+        .select(`upload_batch_id, ${timeCol}`)
+        .not("upload_batch_id", "is", null)
+        .order(timeCol, { ascending: false });
+
+      if (!data) return [];
+      const rows = data as unknown as Record<string, string>[];
+      const batchMap = new Map<string, { uploaded_at: string; count: number }>();
+      for (const row of rows) {
+        const bid = row.upload_batch_id;
+        if (!bid) continue;
+        const existing = batchMap.get(bid);
+        if (existing) existing.count++;
+        else batchMap.set(bid, { uploaded_at: row[timeCol], count: 1 });
+      }
+      const entries: BatchEntry[] = [];
+      for (const [id, v] of batchMap) {
+        entries.push({ upload_batch_id: id, uploaded_at: v.uploaded_at, count: v.count, source });
+      }
+      return entries;
+    } catch {
+      return []; // table may not exist yet
+    }
+  };
+
   const loadBatches = async () => {
     setLoading(true);
-    const allBatches: BatchEntry[] = [];
+    const [liBatches, cBatches, dBatches, leadBatches] = await Promise.all([
+      loadBatchesFromTable("linkedin_ads_raw", "uploaded_at", "linkedin"),
+      loadBatchesFromTable("contacts", "created_at", "contacts"),
+      loadBatchesFromTable("deals", "synced_at", "deals"),
+      loadBatchesFromTable("leads", "uploaded_at", "leads"),
+    ]);
 
-    // Load LinkedIn batches
-    const { data: liData } = await supabase
-      .from("linkedin_ads_raw")
-      .select("upload_batch_id, uploaded_at")
-      .not("upload_batch_id", "is", null)
-      .order("uploaded_at", { ascending: false });
-
-    if (liData) {
-      const batchMap = new Map<string, { uploaded_at: string; count: number }>();
-      for (const row of liData) {
-        const bid = row.upload_batch_id;
-        if (!bid) continue;
-        const existing = batchMap.get(bid);
-        if (existing) existing.count++;
-        else batchMap.set(bid, { uploaded_at: row.uploaded_at, count: 1 });
-      }
-      for (const [id, v] of batchMap) {
-        allBatches.push({ upload_batch_id: id, uploaded_at: v.uploaded_at, count: v.count, source: "linkedin" });
-      }
-    }
-
-    // Load Contacts batches
-    const { data: cData } = await supabase
-      .from("contacts")
-      .select("upload_batch_id, created_at")
-      .not("upload_batch_id", "is", null)
-      .order("created_at", { ascending: false });
-
-    if (cData) {
-      const batchMap = new Map<string, { uploaded_at: string; count: number }>();
-      for (const row of cData) {
-        const bid = row.upload_batch_id;
-        if (!bid) continue;
-        const existing = batchMap.get(bid);
-        if (existing) existing.count++;
-        else batchMap.set(bid, { uploaded_at: row.created_at, count: 1 });
-      }
-      for (const [id, v] of batchMap) {
-        allBatches.push({ upload_batch_id: id, uploaded_at: v.uploaded_at, count: v.count, source: "contacts" });
-      }
-    }
-
-    // Load Deals batches
-    const { data: dData } = await supabase
-      .from("deals")
-      .select("upload_batch_id, synced_at")
-      .not("upload_batch_id", "is", null)
-      .order("synced_at", { ascending: false });
-
-    if (dData) {
-      const batchMap = new Map<string, { uploaded_at: string; count: number }>();
-      for (const row of dData) {
-        const bid = row.upload_batch_id;
-        if (!bid) continue;
-        const existing = batchMap.get(bid);
-        if (existing) existing.count++;
-        else batchMap.set(bid, { uploaded_at: row.synced_at, count: 1 });
-      }
-      for (const [id, v] of batchMap) {
-        allBatches.push({ upload_batch_id: id, uploaded_at: v.uploaded_at, count: v.count, source: "deals" });
-      }
-    }
-
+    const allBatches = [...liBatches, ...cBatches, ...dBatches, ...leadBatches];
     allBatches.sort((a, b) => new Date(b.uploaded_at).getTime() - new Date(a.uploaded_at).getTime());
     setBatches(allBatches);
     setLoading(false);
     setLoaded(true);
   };
 
-  const handleRevert = async (batchId: string, source: "linkedin" | "contacts" | "deals") => {
+  const handleRevert = async (batchId: string, source: BatchEntry["source"]) => {
     if (!confirm(`Revert this ${source} upload? This will delete all rows from batch ${batchId.slice(0, 8)}...`)) {
       return;
     }
@@ -507,6 +608,7 @@ function UploadHistory() {
     const revertUrl =
       source === "linkedin" ? "/api/linkedin/revert"
       : source === "contacts" ? "/api/contacts/revert"
+      : source === "leads" ? "/api/leads/revert"
       : "/api/deals/revert";
     try {
       const res = await fetch(revertUrl, {
@@ -529,12 +631,14 @@ function UploadHistory() {
     linkedin: "LinkedIn Ads",
     contacts: "Contacts",
     deals: "Deals",
+    leads: "Leads",
   };
 
   const sourceColor: Record<string, string> = {
     linkedin: "bg-blue-500/20 text-blue-400",
     contacts: "bg-green-500/20 text-green-400",
     deals: "bg-amber-500/20 text-amber-400",
+    leads: "bg-primary/20 text-primary",
   };
 
   return (
@@ -851,7 +955,7 @@ function DataStats() {
 
   useEffect(() => {
     async function loadStats() {
-      const tables = ["contacts", "deals", "linkedin_ads_raw", "campaign_names", "mql_to_sql"];
+      const tables = ["leads", "contacts", "deals", "linkedin_ads_raw", "campaign_names", "mql_to_sql"];
       const counts: Record<string, number> = {};
 
       for (const table of tables) {
@@ -868,6 +972,7 @@ function DataStats() {
   }, []);
 
   const tableLabels: Record<string, string> = {
+    leads: "Leads (unified)",
     contacts: "Contacts",
     deals: "Deals",
     linkedin_ads_raw: "LinkedIn Ads Rows",

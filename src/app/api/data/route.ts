@@ -7,6 +7,7 @@ const ALLOWED_ENTITIES = [
   "linkedin_ads_performance",
   "contacts",
   "deals",
+  "leads",
   "campaign_names",
   "mql_to_sql",
   "monthly_spend",
@@ -333,6 +334,53 @@ export async function GET(request: NextRequest) {
     // Always compute leads_enriched from raw tables (view may not exist)
     if (entity === "leads_enriched") {
       const debugMode = searchParams.get("debug") === "true";
+
+      // Prefer unified leads table if it has data (single-CSV upload)
+      const { data: directLeads, error: leadsErr } = await supabase
+        .from("leads")
+        .select("*");
+
+      if (!leadsErr && directLeads && directLeads.length > 0) {
+        // Map the leads table rows to the LeadEnriched shape
+        const rows = directLeads.map((r: Record<string, unknown>) => ({
+          id: r.id,
+          first_name: r.first_name ?? null,
+          last_name: r.last_name ?? null,
+          email: r.email ?? null,
+          first_email_date: r.first_email_date ?? null,
+          week_number: r.week_number ?? null,
+          industry: r.industry ?? "-",
+          lead_status: r.lead_status ?? null,
+          num_employees: r.num_employees ?? null,
+          tier: r.tier ?? "TIER 4",
+          campaign_raw: r.campaign_raw ?? null,
+          channel: r.channel ?? null,
+          company_name: r.company_name ?? null,
+          deal_amount: Number(r.deal_amount ?? 0),
+          month_key: r.month_key ?? null,
+          year: r.year ?? null,
+          country: r.country ?? "-",
+          campaign_name_normalized: r.campaign_name_normalized ?? "-",
+          first_meeting_set: r.first_meeting_set ?? "Not Found",
+        }));
+
+        if (debugMode) {
+          return NextResponse.json({
+            data: rows,
+            _debug: {
+              source: "leads_table_direct",
+              total_rows: rows.length,
+              rows_with_deal: rows.filter((r) => r.deal_amount > 0).length,
+              total_pipeline: rows.reduce((s, r) => s + r.deal_amount, 0),
+              sample_row: rows[0] ?? null,
+            },
+          });
+        }
+
+        return NextResponse.json(rows);
+      }
+
+      // Fallback: compute from contacts + deals (legacy two-CSV approach)
       const computed = await computeLeadsEnriched(supabase, debugMode);
       return NextResponse.json(computed);
     }
