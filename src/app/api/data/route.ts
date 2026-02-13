@@ -47,6 +47,47 @@ function getTier(employees: number | null): string {
 }
 
 /**
+ * Normalize HubSpot original_traffic_source values to standard channel names.
+ * HubSpot exports values like "PAID_SOCIAL", "PAID_SEARCH", "ORGANIC_SEARCH",
+ * "SOCIAL_MEDIA", "DIRECT_TRAFFIC", "EMAIL_MARKETING", etc.
+ * The dashboard expects "Paid Social", "Paid Search", "Organic Search", etc.
+ */
+function normalizeChannel(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const v = String(raw).trim().toUpperCase().replace(/[\s_-]+/g, "_");
+  switch (v) {
+    case "PAID_SOCIAL":
+    case "PAID_SOCIAL_MEDIA":
+      return "Paid Social";
+    case "PAID_SEARCH":
+      return "Paid Search";
+    case "ORGANIC_SEARCH":
+      return "Organic Search";
+    case "AI_REFERRALS":
+    case "AI_REFERRAL":
+      return "AI Referrals";
+    case "REFERRAL_FROM_SPANISH_CLIENT":
+      return "Referral From Spanish Client";
+    case "REFERRAL_FROM_NETSUITE":
+      return "Referral From NetSuite";
+    case "SOCIAL_MEDIA":
+      return "Paid Social";
+    default: {
+      // Try a direct match (user may have already-normalized values)
+      const trimmed = String(raw).trim();
+      const known = [
+        "Paid Social", "Paid Search", "Organic Search",
+        "AI Referrals", "Referral From Spanish Client", "Referral From NetSuite",
+      ];
+      for (const k of known) {
+        if (trimmed.toLowerCase() === k.toLowerCase()) return k;
+      }
+      return trimmed || null;
+    }
+  }
+}
+
+/**
  * Compute leads_enriched from raw contacts + deals + campaign_names + mql_to_sql.
  * Always computed in JS — never relies on the materialized view.
  */
@@ -58,31 +99,42 @@ async function computeLeadsEnriched(supabase: SupabaseClient) {
     safeFetch(supabase, "mql_to_sql"),
   ]);
 
-  // Aggregate deals by associated_company
-  const dealMap = new Map<string, number>();
+  // Aggregate deals by associated_company_id (numeric, reliable)
+  // Also build a fallback map by company name (case-insensitive, trimmed)
+  const dealByCompanyId = new Map<number, number>();
+  const dealByCompanyName = new Map<string, number>();
   for (const d of deals) {
-    const company = (d.associated_company as string) ?? null;
-    if (!company) continue;
     const amount = Number(d.amount_corrected ?? d.amount ?? 0);
-    dealMap.set(company, (dealMap.get(company) || 0) + amount);
+
+    const companyId = d.associated_company_id ? Number(d.associated_company_id) : null;
+    if (companyId) {
+      dealByCompanyId.set(companyId, (dealByCompanyId.get(companyId) || 0) + amount);
+    }
+
+    const companyName = d.associated_company ? String(d.associated_company).trim().toLowerCase() : null;
+    if (companyName) {
+      dealByCompanyName.set(companyName, (dealByCompanyName.get(companyName) || 0) + amount);
+    }
   }
 
-  // Index campaign_names by original_name
+  // Index campaign_names by original_name (case-insensitive, trimmed for robust matching)
   const cnMap = new Map<string, { country_code: string; normalized_name: string }>();
   for (const cn of campaignNames) {
     if (cn.original_name) {
-      cnMap.set(cn.original_name as string, {
+      const key = String(cn.original_name).trim().toLowerCase();
+      cnMap.set(key, {
         country_code: (cn.country_code as string) ?? "-",
         normalized_name: (cn.normalized_name as string) ?? "-",
       });
     }
   }
 
-  // Index mql_to_sql by company_name
+  // Index mql_to_sql by company_name (case-insensitive, trimmed)
   const msMap = new Map<string, string>();
   for (const ms of mqlToSql) {
     if (ms.company_name) {
-      msMap.set(ms.company_name as string, (ms.meeting_set as string) ?? "Not Found");
+      const key = String(ms.company_name).trim().toLowerCase();
+      msMap.set(key, (ms.meeting_set as string) ?? "Not Found");
     }
   }
 
@@ -92,10 +144,25 @@ async function computeLeadsEnriched(supabase: SupabaseClient) {
       (c.lead_origin_multiple && String(c.lead_origin_multiple).trim()) ||
       (c.original_traffic_source ? String(c.original_traffic_source) : null) ||
       null;
-    const cn = campaignRaw ? cnMap.get(String(campaignRaw)) : undefined;
+
+    // Campaign name lookup: case-insensitive, trimmed
+    const cnKey = campaignRaw ? String(campaignRaw).trim().toLowerCase() : null;
+    const cn = cnKey ? cnMap.get(cnKey) : undefined;
+
     const companyName = c.company_name ? String(c.company_name) : null;
-    const dealAmount = companyName ? dealMap.get(companyName) ?? 0 : 0;
-    const meetingSet = companyName ? msMap.get(companyName) ?? "Not Found" : "Not Found";
+    const companyNameLower = companyName ? companyName.trim().toLowerCase() : null;
+
+    // Deal amount: prefer lookup by associated_company_id, fallback to company name
+    const contactCompanyId = c.associated_company_id ? Number(c.associated_company_id) : null;
+    let dealAmount = 0;
+    if (contactCompanyId && dealByCompanyId.has(contactCompanyId)) {
+      dealAmount = dealByCompanyId.get(contactCompanyId)!;
+    } else if (companyNameLower) {
+      dealAmount = dealByCompanyName.get(companyNameLower) ?? 0;
+    }
+
+    // MQL-to-SQL meeting set: case-insensitive company name lookup
+    const meetingSet = companyNameLower ? msMap.get(companyNameLower) ?? "Not Found" : "Not Found";
 
     const fed = c.first_email_date ? String(c.first_email_date) : null;
     const fedDate = fed ? new Date(fed) : null;
@@ -115,7 +182,7 @@ async function computeLeadsEnriched(supabase: SupabaseClient) {
       num_employees: c.num_employees ?? null,
       tier: getTier(c.num_employees as number | null),
       campaign_raw: campaignRaw,
-      channel: c.original_traffic_source ?? null,
+      channel: normalizeChannel(c.original_traffic_source as string | null),
       company_name: companyName,
       deal_amount: dealAmount,
       month_key: monthKey,
@@ -141,7 +208,8 @@ async function computeLinkedinPerf(supabase: SupabaseClient) {
   const cnMap = new Map<string, { country_code: string; normalized_name: string }>();
   for (const cn of campaignNames) {
     if (cn.original_name) {
-      cnMap.set(cn.original_name as string, {
+      const key = String(cn.original_name).trim().toLowerCase();
+      cnMap.set(key, {
         country_code: (cn.country_code as string) ?? null,
         normalized_name: (cn.normalized_name as string) ?? null,
       });
@@ -149,7 +217,8 @@ async function computeLinkedinPerf(supabase: SupabaseClient) {
   }
 
   return rawRows.map((r) => {
-    const cn = r.campaign_name ? cnMap.get(String(r.campaign_name)) : undefined;
+    const cnKey = r.campaign_name ? String(r.campaign_name).trim().toLowerCase() : null;
+    const cn = cnKey ? cnMap.get(cnKey) : undefined;
     const startDate = r.start_date ? String(r.start_date) : null;
     const sd = startDate ? new Date(startDate) : null;
     const month = sd && !isNaN(sd.getTime()) ? sd.getMonth() + 1 : null;

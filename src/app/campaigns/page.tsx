@@ -4,7 +4,7 @@ import { AppShell } from "@/components/dashboard/app-shell";
 import { CampaignPerformanceTable } from "@/components/tables/performance-table";
 import { supabase } from "@/lib/supabase";
 import { useEffect, useState, useMemo } from "react";
-import { sortMonthKeys, safeDivide, monthKeyToLabel } from "@/lib/utils";
+import { sortMonthKeys, safeDivide, monthKeyToLabel, isMql } from "@/lib/utils";
 import type { CampaignName, LeadEnriched, LinkedInAdsPerformance, CampaignMonthlyMetrics } from "@/types";
 import { Plus, Save, Trash2 } from "lucide-react";
 
@@ -65,7 +65,7 @@ export default function CampaignsPage() {
         const impressions = campPerf.reduce((s, p) => s + p.impressions, 0);
         const clicks = campPerf.reduce((s, p) => s + p.clicks, 0);
         const leadCount = campLeads.length;
-        const mqlCount = campLeads.filter((l) => l.lead_status !== "Not Qualified").length;
+        const mqlCount = campLeads.filter((l) => isMql(l.lead_status)).length;
         const sqlLeads = campLeads.filter((l) => l.deal_amount > 0);
         const sqlCount = sqlLeads.length;
         const pipeline = sqlLeads.reduce((s, l) => s + l.deal_amount, 0);

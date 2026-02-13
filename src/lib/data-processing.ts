@@ -8,6 +8,7 @@ import type {
   ForecastConfig,
   ForecastRow,
 } from "@/types";
+import { isMql } from "@/lib/utils";
 
 // Re-import MONTH_NAMES as a value (the type import above is just for reference)
 const MONTH_NAMES_VAL: readonly string[] = [
@@ -52,7 +53,7 @@ export function computeChannelMonthlyMetrics(
       const leadsCount = channelLeads.length;
 
       const mqls = channelLeads.filter(
-        (l) => l.lead_status !== "Not Qualified"
+        (l) => isMql(l.lead_status)
       ).length;
 
       const sqlLeads = channelLeads.filter((l) => l.deal_amount > 0);
@@ -159,7 +160,7 @@ export function computeCountryMonthlyMetrics(
 
     const leadsCount = countryLeads.length;
     const mqls = countryLeads.filter(
-      (l) => l.lead_status !== "Not Qualified"
+      (l) => isMql(l.lead_status)
     ).length;
     const sqls = countryLeads.filter((l) => l.deal_amount > 0).length;
     const pipeline = countryLeads
@@ -272,7 +273,7 @@ export function computeCampaignMonthlyMetrics(
 
     const leadsCount = campaignLeads.length;
     const mqls = campaignLeads.filter(
-      (l) => l.lead_status !== "Not Qualified"
+      (l) => isMql(l.lead_status)
     ).length;
     const sqls = campaignLeads.filter((l) => l.deal_amount > 0).length;
     const pipeline = campaignLeads

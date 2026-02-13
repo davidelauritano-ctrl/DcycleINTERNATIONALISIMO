@@ -81,6 +81,14 @@ export function determineCampaign(
   return originalTrafficSource?.trim() || null;
 }
 
+/**
+ * A lead counts as MQL if it has a lead_status AND that status is not "Not Qualified".
+ * Leads with null/empty status have not been qualified yet and should not inflate MQL counts.
+ */
+export function isMql(leadStatus: string | null | undefined): boolean {
+  return !!leadStatus && leadStatus !== "Not Qualified";
+}
+
 export function tierColor(tier: string): string {
   switch (tier) {
     case "ENTERPRISE":

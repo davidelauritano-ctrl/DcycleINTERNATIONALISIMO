@@ -6,7 +6,7 @@ import { ChannelPerformanceTable, CountryPerformanceTable } from "@/components/t
 import { LineChartComponent } from "@/components/charts/line-chart";
 import { BarChartComponent } from "@/components/charts/bar-chart";
 import { useEffect, useState, useMemo } from "react";
-import { formatCurrency, formatNumber, safeDivide, sortMonthKeys, monthKeyToLabel } from "@/lib/utils";
+import { formatCurrency, formatNumber, safeDivide, sortMonthKeys, monthKeyToLabel, isMql } from "@/lib/utils";
 import type { LeadEnriched, LinkedInAdsPerformance, MonthlySpend, ChannelMonthlyMetrics, CountryMonthlyMetrics } from "@/types";
 import { Users, Target, Handshake, TrendingUp, DollarSign, BarChart3, PieChart } from "lucide-react";
 import { DashboardEmptyState } from "@/components/dashboard/empty-state";
@@ -56,7 +56,7 @@ export default function DashboardPage() {
       for (const mk of allMonthKeys) {
         const monthLeads = leads.filter((l) => l.channel === channel && l.month_key === mk);
         const leadCount = monthLeads.length;
-        const mqlCount = monthLeads.filter((l) => l.lead_status !== "Not Qualified").length;
+        const mqlCount = monthLeads.filter((l) => isMql(l.lead_status)).length;
         const sqlLeads = monthLeads.filter((l) => l.deal_amount > 0);
         const sqlCount = sqlLeads.length;
         const pipeline = sqlLeads.reduce((sum, l) => sum + l.deal_amount, 0);
@@ -115,7 +115,7 @@ export default function DashboardPage() {
         const impressions = countryPerf.reduce((s, p) => s + p.impressions, 0);
         const clicks = countryPerf.reduce((s, p) => s + p.clicks, 0);
         const leadCount = countryLeads.length;
-        const mqlCount = countryLeads.filter((l) => l.lead_status !== "Not Qualified").length;
+        const mqlCount = countryLeads.filter((l) => isMql(l.lead_status)).length;
         const sqlLeads = countryLeads.filter((l) => l.deal_amount > 0);
         const sqlCount = sqlLeads.length;
         const pipeline = sqlLeads.reduce((s, l) => s + l.deal_amount, 0);
@@ -174,7 +174,7 @@ export default function DashboardPage() {
   const totals = useMemo(() => {
     const allLeads = leads.filter((l) => l.campaign_raw !== "[Demo] New submission");
     const totalLeads = allLeads.length;
-    const totalMQLs = allLeads.filter((l) => l.lead_status !== "Not Qualified").length;
+    const totalMQLs = allLeads.filter((l) => isMql(l.lead_status)).length;
     const sqlLeads = allLeads.filter((l) => l.deal_amount > 0);
     const totalSQLs = sqlLeads.length;
     const totalPipeline = sqlLeads.reduce((s, l) => s + l.deal_amount, 0);
@@ -200,7 +200,7 @@ export default function DashboardPage() {
       return {
         month_key: mk,
         Leads: monthLeads.length,
-        MQLs: monthLeads.filter((l) => l.lead_status !== "Not Qualified").length,
+        MQLs: monthLeads.filter((l) => isMql(l.lead_status)).length,
         SQLs: monthLeads.filter((l) => l.deal_amount > 0).length,
       };
     });
