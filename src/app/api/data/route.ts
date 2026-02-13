@@ -99,12 +99,20 @@ async function computeLeadsEnriched(supabase: SupabaseClient) {
     safeFetch(supabase, "mql_to_sql"),
   ]);
 
-  // Aggregate deals by associated_company_id (numeric, reliable)
-  // Also build a fallback map by company name (case-insensitive, trimmed)
-  const dealByCompanyId = new Map<number, number>();
-  const dealByCompanyName = new Map<string, number>();
+  // Build multiple deal-amount lookup maps for robust join.
+  // Priority: contact ID → company ID → company name → contact name
+  const dealByContactId = new Map<number, number>();       // deals.associated_contact_id → sum
+  const dealByCompanyId = new Map<number, number>();       // deals.associated_company_id → sum
+  const dealByCompanyName = new Map<string, number>();     // deals.associated_company (lower) → sum
+  const dealByContactName = new Map<string, number>();     // deals.associated_contact (lower) → sum
   for (const d of deals) {
     const amount = Number(d.amount_corrected ?? d.amount ?? 0);
+    if (amount === 0) continue;
+
+    const contactId = d.associated_contact_id ? Number(d.associated_contact_id) : null;
+    if (contactId) {
+      dealByContactId.set(contactId, (dealByContactId.get(contactId) || 0) + amount);
+    }
 
     const companyId = d.associated_company_id ? Number(d.associated_company_id) : null;
     if (companyId) {
@@ -114,6 +122,11 @@ async function computeLeadsEnriched(supabase: SupabaseClient) {
     const companyName = d.associated_company ? String(d.associated_company).trim().toLowerCase() : null;
     if (companyName) {
       dealByCompanyName.set(companyName, (dealByCompanyName.get(companyName) || 0) + amount);
+    }
+
+    const contactName = d.associated_contact ? String(d.associated_contact).trim().toLowerCase() : null;
+    if (contactName) {
+      dealByContactName.set(contactName, (dealByContactName.get(contactName) || 0) + amount);
     }
   }
 
@@ -152,13 +165,19 @@ async function computeLeadsEnriched(supabase: SupabaseClient) {
     const companyName = c.company_name ? String(c.company_name) : null;
     const companyNameLower = companyName ? companyName.trim().toLowerCase() : null;
 
-    // Deal amount: prefer lookup by associated_company_id, fallback to company name
+    // Deal amount: try all join paths — contact ID → company ID → company name → contact name
+    const contactRecordId = c.hubspot_record_id ? Number(c.hubspot_record_id) : null;
     const contactCompanyId = c.associated_company_id ? Number(c.associated_company_id) : null;
+    const fullName = [c.first_name, c.last_name].filter(Boolean).join(" ").trim().toLowerCase() || null;
     let dealAmount = 0;
-    if (contactCompanyId && dealByCompanyId.has(contactCompanyId)) {
+    if (contactRecordId && dealByContactId.has(contactRecordId)) {
+      dealAmount = dealByContactId.get(contactRecordId)!;
+    } else if (contactCompanyId && dealByCompanyId.has(contactCompanyId)) {
       dealAmount = dealByCompanyId.get(contactCompanyId)!;
-    } else if (companyNameLower) {
-      dealAmount = dealByCompanyName.get(companyNameLower) ?? 0;
+    } else if (companyNameLower && dealByCompanyName.has(companyNameLower)) {
+      dealAmount = dealByCompanyName.get(companyNameLower)!;
+    } else if (fullName && dealByContactName.has(fullName)) {
+      dealAmount = dealByContactName.get(fullName)!;
     }
 
     // MQL-to-SQL meeting set: case-insensitive company name lookup

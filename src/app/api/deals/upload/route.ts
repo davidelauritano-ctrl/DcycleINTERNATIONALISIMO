@@ -42,9 +42,9 @@ function mapRow(row: Record<string, string>, batchId: string): Record<string, un
     deal_stage: str(row["Deal Stage"]),
     close_date: parseDatetime(row["Close Date"] ?? row["Close date"]),
     deal_owner: str(row["Deal owner"] ?? row["Deal Owner"]),
-    amount: parseNum(row["Amount"]),
-    amount_corrected: row["Amount Corrected"]
-      ? parseNum(row["Amount Corrected"])
+    amount: parseNum(row["Amount"] ?? row["Deal Amount"]),
+    amount_corrected: (row["Amount Corrected"] ?? row["Deal Amount Corrected"])
+      ? parseNum(row["Amount Corrected"] ?? row["Deal Amount Corrected"])
       : null,
     is_closed_won: parseBool(row["Is Closed Won"] ?? row["Closed Won"]),
     is_closed_lost: parseBool(row["Is Closed Lost"] ?? row["Closed Lost"]),
@@ -55,10 +55,15 @@ function mapRow(row: Record<string, string>, batchId: string): Record<string, un
       row["Associated Contact"] ?? row["Associated Contacts"],
     ),
     associated_company: str(
-      row["Associated Company"] ?? row["Associated Companies"],
+      row["Associated Company"] ?? row["Associated Companies"] ??
+      row["Company Name"] ?? row["Company"],
     ),
-    associated_contact_id: parseBigInt(row["Associated Contact ID"]),
-    associated_company_id: parseBigInt(row["Associated Company ID"]),
+    associated_contact_id: parseBigInt(
+      row["Associated Contact ID"] ?? row["Associated Contact IDs"],
+    ),
+    associated_company_id: parseBigInt(
+      row["Associated Company ID"] ?? row["Associated Company IDs"],
+    ),
     upload_batch_id: batchId,
     synced_at: new Date().toISOString(),
   };
